@@ -1,0 +1,18 @@
+{
+  "name": "@mbattagl/pi-web-tools",
+  "version": "1.0.0",
+  "description": "web_search and web_fetch tools for pi — search the web with Brave Search API and fetch pages as plain text",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mbattagl/pi-web-tools"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}
