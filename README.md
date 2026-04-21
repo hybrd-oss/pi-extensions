@@ -1,6 +1,6 @@
 # pi-extensions
 
-A collection of [pi](https://github.com/mariozechner/pi) extensions by [mibattaglia](https://github.com/mibattaglia).
+A collection of [pi](https://github.com/mariozechner/pi) extensions.
 
 ## Install
 
