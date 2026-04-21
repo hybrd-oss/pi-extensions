@@ -4,6 +4,6 @@
   "description": "Pi extensions by mibattaglia",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["pi-dcg/extensions", "pi-web-tools/extensions"]
+    "extensions": ["pi-dcg/extensions", "pi-web-tools/extensions", "pi-ask-question/extensions"]
   }
 }
