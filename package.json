@@ -1,0 +1,9 @@
+{
+  "name": "pi-extensions",
+  "version": "1.0.0",
+  "description": "Pi extensions by mibattaglia",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["pi-dcg/extensions", "pi-web-tools/extensions"]
+  }
+}
