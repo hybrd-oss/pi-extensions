@@ -10,7 +10,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -22,6 +22,40 @@ interface DcgResult {
   ruleId?: string;
 }
 
+function spawnWithStdin(cmd: string, args: string[], input: string, timeout: number): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let killed = false;
+
+    const timer = setTimeout(() => {
+      killed = true;
+      proc.kill("SIGTERM");
+    }, timeout);
+
+    proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+    proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+
+    proc.on("error", (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (killed) {
+        reject(Object.assign(new Error("Process timed out"), { code: "ETIMEDOUT" }));
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+
+    proc.stdin.write(input);
+    proc.stdin.end();
+  });
+}
+
 async function runDcg(command: string): Promise<DcgResult> {
   const input = JSON.stringify({
     tool_name: "Bash",
@@ -29,10 +63,7 @@ async function runDcg(command: string): Promise<DcgResult> {
   });
 
   try {
-    const { stdout, stderr } = await execFileAsync("dcg", [], {
-      input,
-      timeout: 10_000,
-    });
+    const { stdout, stderr } = await spawnWithStdin("dcg", [], input, 10_000);
 
     // Safe commands produce no output
     const trimmed = stdout.trim();
