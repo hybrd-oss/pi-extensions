@@ -22,7 +22,12 @@ interface DcgResult {
   ruleId?: string;
 }
 
-function spawnWithStdin(cmd: string, args: string[], input: string, timeout: number): Promise<{ stdout: string; stderr: string }> {
+function spawnWithStdin(
+  cmd: string,
+  args: string[],
+  input: string,
+  timeout: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -47,7 +52,7 @@ function spawnWithStdin(cmd: string, args: string[], input: string, timeout: num
       if (killed) {
         reject(Object.assign(new Error("Process timed out"), { code: "ETIMEDOUT" }));
       } else {
-        resolve({ stdout, stderr });
+        resolve({ stdout, stderr, exitCode: code });
       }
     });
 
@@ -143,11 +148,14 @@ export default function (pi: ExtensionAPI) {
 
     if (choice?.startsWith("✅") && allowOnceCode) {
       try {
-        await execFileAsync("dcg", ["allow-once", allowOnceCode], { timeout: 5_000 });
+        const { stdout, stderr, exitCode } = await spawnWithStdin("dcg", ["allow-once", allowOnceCode], "y\n", 5_000);
+        if (exitCode !== 0) {
+          throw new Error((stderr || stdout || `dcg allow-once exited with code ${exitCode}`).trim());
+        }
         ctx.ui.notify(`DCG: Allowed once (code ${allowOnceCode})`, "info");
         return undefined;
-      } catch {
-        ctx.ui.notify("DCG: Failed to run allow-once", "error");
+      } catch (err: any) {
+        ctx.ui.notify(`DCG: Failed to run allow-once: ${err.message}`, "error");
         return { block: true, reason: "DCG allow-once failed" };
       }
     }
