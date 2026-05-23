@@ -1,3 +1,4 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { Type } from "typebox";
 const orchestrator = require("../src/index.js");
@@ -54,6 +55,151 @@ function formatDispatchResult(manifest) {
   }
   lines.push("", `Manifest: .pi/orchestrator/runs/${manifest.runId}/manifest.json`);
   return lines.join("\n");
+}
+
+function configPathFor(cwd) {
+  return path.join(cwd, ".pi", "orchestrator", "config.json");
+}
+
+function defaultConfigFor(cwd) {
+  return {
+    worktrees: {
+      root: `../${path.basename(cwd)}-orch-worktrees`,
+    },
+    scripts: {},
+    defaults: {
+      workerStartupScripts: [],
+      workerValidationScripts: [],
+      integrationStartupScripts: [],
+      integrationValidationScripts: [],
+    },
+  };
+}
+
+async function readOrchestratorConfig(cwd) {
+  const file = configPathFor(cwd);
+  try {
+    return { file, exists: true, config: JSON.parse(await fs.readFile(file, "utf8")) };
+  } catch (error) {
+    if (error && error.code === "ENOENT") return { file, exists: false, config: defaultConfigFor(cwd) };
+    throw error;
+  }
+}
+
+async function writeOrchestratorConfig(cwd, config) {
+  const file = configPathFor(cwd);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(config, null, 2) + "\n", "utf8");
+  return file;
+}
+
+function validateOrchestratorConfig(config) {
+  const errors = [];
+  const warnings = [];
+  const scripts = config?.scripts && typeof config.scripts === "object" && !Array.isArray(config.scripts) ? config.scripts : {};
+  if (!config || typeof config !== "object") errors.push("Config must be a JSON object.");
+  if (!config?.worktrees?.root) warnings.push("worktrees.root is not set; the default worktree root will be used.");
+  for (const [id, script] of Object.entries(scripts)) {
+    if (!script || typeof script !== "object") errors.push(`scripts.${id} must be an object.`);
+    else if (typeof script.command !== "string" || !script.command.trim()) errors.push(`scripts.${id}.command is required.`);
+  }
+  const defaults = config?.defaults || {};
+  for (const key of ["workerStartupScripts", "workerValidationScripts", "integrationStartupScripts", "integrationValidationScripts"]) {
+    const ids = defaults[key] || [];
+    if (!Array.isArray(ids)) {
+      errors.push(`defaults.${key} must be an array of script ids.`);
+      continue;
+    }
+    for (const id of ids) if (!scripts[id]) errors.push(`defaults.${key} references unknown script id: ${id}`);
+  }
+  return { ok: errors.length === 0, errors, warnings, scriptIds: Object.keys(scripts).sort() };
+}
+
+async function chooseScriptIds(ctx, config, title, current = []) {
+  const ids = Object.keys(config.scripts || {}).sort();
+  if (ids.length === 0) {
+    ctx.ui.notify("No scripts defined yet. Add scripts before setting defaults.", "warning");
+    return current;
+  }
+  const raw = await ctx.ui.input(`${title}\nAvailable: ${ids.join(", ")}\nComma-separated script ids:`, current.join(", "));
+  if (raw === undefined) return current;
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+async function handleOrchestratorConfigCommand(args, ctx) {
+  const actionArg = args?.trim();
+  const action = actionArg || (ctx.hasUI
+    ? await ctx.ui.select("Orchestrator config", ["show", "validate", "init", "add-script", "set-defaults"])
+    : "show");
+  if (!action) return;
+
+  const loaded = await readOrchestratorConfig(ctx.cwd);
+  const config = loaded.config;
+
+  if (action === "show") {
+    ctx.ui.notify(`${loaded.file}\n\n${JSON.stringify(config, null, 2)}`, "info");
+    return;
+  }
+
+  if (action === "validate") {
+    const validation = validateOrchestratorConfig(config);
+    const lines = [validation.ok ? "Config is valid." : "Config has errors."];
+    if (validation.scriptIds.length) lines.push(`Scripts: ${validation.scriptIds.join(", ")}`);
+    for (const warning of validation.warnings) lines.push(`Warning: ${warning}`);
+    for (const error of validation.errors) lines.push(`Error: ${error}`);
+    ctx.ui.notify(lines.join("\n"), validation.ok ? "info" : "warning");
+    return;
+  }
+
+  if (action === "init") {
+    if (loaded.exists && ctx.hasUI) {
+      const ok = await ctx.ui.confirm("Overwrite orchestrator config?", `${loaded.file} already exists. Overwrite it with a default named-script config?`);
+      if (!ok) return;
+    }
+    const file = await writeOrchestratorConfig(ctx.cwd, defaultConfigFor(ctx.cwd));
+    ctx.ui.notify(`Created ${file}`, "info");
+    return;
+  }
+
+  if (action === "add-script") {
+    if (!ctx.hasUI) return ctx.ui.notify("add-script requires interactive UI.", "warning");
+    const id = await ctx.ui.input("Script id, e.g. frontend:setup");
+    if (!id) return;
+    const command = await ctx.ui.input(`Command for ${id}`);
+    if (!command) return;
+    const cwd = await ctx.ui.input("cwd relative to worktree root (blank for root)", "");
+    const timeoutRaw = await ctx.ui.input("timeoutSeconds (blank for none)", "");
+    const required = await ctx.ui.confirm("Required script?", "If required, failure blocks the current phase.");
+    config.scripts = config.scripts || {};
+    config.scripts[id] = {
+      command,
+      ...(cwd?.trim() ? { cwd: cwd.trim() } : {}),
+      ...(timeoutRaw?.trim() ? { timeoutSeconds: Number(timeoutRaw.trim()) } : {}),
+      required,
+    };
+    const file = await writeOrchestratorConfig(ctx.cwd, config);
+    ctx.ui.notify(`Added script ${id} to ${file}`, "info");
+    return;
+  }
+
+  if (action === "set-defaults") {
+    if (!ctx.hasUI) return ctx.ui.notify("set-defaults requires interactive UI.", "warning");
+    config.defaults = config.defaults || {};
+    config.defaults.workerStartupScripts = await chooseScriptIds(ctx, config, "Default worker startup scripts", config.defaults.workerStartupScripts || []);
+    config.defaults.workerValidationScripts = await chooseScriptIds(ctx, config, "Default worker validation scripts", config.defaults.workerValidationScripts || []);
+    config.defaults.integrationStartupScripts = await chooseScriptIds(ctx, config, "Default integration startup scripts", config.defaults.integrationStartupScripts || []);
+    config.defaults.integrationValidationScripts = await chooseScriptIds(ctx, config, "Default integration validation scripts", config.defaults.integrationValidationScripts || []);
+    const validation = validateOrchestratorConfig(config);
+    if (!validation.ok) {
+      ctx.ui.notify(`Defaults not saved; config would be invalid:\n${validation.errors.join("\n")}`, "warning");
+      return;
+    }
+    const file = await writeOrchestratorConfig(ctx.cwd, config);
+    ctx.ui.notify(`Updated defaults in ${file}`, "info");
+    return;
+  }
+
+  ctx.ui.notify("Usage: /orch-config [show|validate|init|add-script|set-defaults]", "warning");
 }
 
 export default function piOrchestratorExtension(pi) {
@@ -218,6 +364,16 @@ export default function piOrchestratorExtension(pi) {
     handler: async (args) => {
       pi.sendUserMessage(`Use the orchestrator extension for this request. Read the relevant specs, propose a task decomposition, ask for approval before dispatch, prefer per-task worktrees, and merge only after reporting results. Request: ${args || "(no request provided)"}`);
     },
+  });
+
+  pi.registerCommand("orch-config", {
+    description: "Create, show, validate, or edit .pi/orchestrator/config.json. Usage: /orch-config [show|validate|init|add-script|set-defaults]",
+    handler: handleOrchestratorConfigCommand,
+  });
+
+  pi.registerCommand("orchestrator-config", {
+    description: "Alias for /orch-config.",
+    handler: handleOrchestratorConfigCommand,
   });
 
   pi.registerCommand("orch-status", {

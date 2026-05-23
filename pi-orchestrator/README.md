@@ -14,6 +14,8 @@ A Pi extension package for decomposing large implementation requests into worker
 ## Commands
 
 - `/orchestrate <request>`
+- `/orch-config [show|validate|init|add-script|set-defaults]`
+- `/orchestrator-config [show|validate|init|add-script|set-defaults]`
 - `/orch-status [run-id]`
 - `/orch-merge <run-id>`
 - `/orch-verify <run-id>`
