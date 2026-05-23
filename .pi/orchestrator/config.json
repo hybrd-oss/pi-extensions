@@ -1,0 +1,21 @@
+{
+  "worktrees": {
+    "root": "../pi-extensions-orch-worktrees",
+    "startupHooks": []
+  },
+  "validation": {
+    "worker": [],
+    "integration": [
+      {
+        "name": "smoke files exist",
+        "command": "test -f tmp-orchestrator-smoke/hello.txt && test -f tmp-orchestrator-smoke/package-summary.md",
+        "timeoutSeconds": 30
+      },
+      {
+        "name": "hello content valid",
+        "command": "grep -q 'hello from orchestrator' tmp-orchestrator-smoke/hello.txt",
+        "timeoutSeconds": 30
+      }
+    ]
+  }
+}
