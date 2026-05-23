@@ -26,24 +26,54 @@ Create `.pi/orchestrator/config.json` in a project:
 ```json
 {
   "worktrees": {
-    "root": "../repo-orch-worktrees",
-    "startupHooks": [
-      {
-        "name": "install dependencies",
-        "command": "npm install",
-        "timeoutSeconds": 600,
-        "required": true,
-        "runFor": ["worker", "integration"]
-      }
-    ]
+    "root": "../repo-orch-worktrees"
   },
-  "validation": {
-    "worker": [
-      { "name": "test", "command": "npm test", "timeoutSeconds": 600 }
-    ],
-    "integration": [
-      { "name": "full test suite", "command": "npm test", "timeoutSeconds": 900 }
-    ]
+  "scripts": {
+    "frontend:setup": {
+      "command": "pnpm install",
+      "cwd": "apps/frontend",
+      "timeoutSeconds": 600
+    },
+    "backend:setup": {
+      "command": "poetry install",
+      "cwd": "services/backend",
+      "timeoutSeconds": 900
+    },
+    "frontend:test": {
+      "command": "pnpm test",
+      "cwd": "apps/frontend",
+      "timeoutSeconds": 600
+    },
+    "backend:test": {
+      "command": "pytest",
+      "cwd": "services/backend",
+      "timeoutSeconds": 600
+    }
+  },
+  "defaults": {
+    "workerStartupScripts": [],
+    "workerValidationScripts": [],
+    "integrationStartupScripts": [],
+    "integrationValidationScripts": []
+  }
+}
+```
+
+Select scripts explicitly in `orchestrator_dispatch` per task and integration:
+
+```json
+{
+  "tasks": [
+    {
+      "id": "frontend-ui",
+      "task": "Implement UI changes",
+      "startupScripts": ["frontend:setup"],
+      "validationScripts": ["frontend:test"]
+    }
+  ],
+  "integration": {
+    "startupScripts": ["frontend:setup", "backend:setup"],
+    "validationScripts": ["frontend:test", "backend:test"]
   }
 }
 ```

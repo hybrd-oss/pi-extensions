@@ -2,11 +2,20 @@ import * as path from "node:path";
 import { Type } from "typebox";
 const orchestrator = require("../src/index.js");
 
+const ScriptIdsSchema = Type.Array(Type.String(), { description: "Named orchestrator script ids from .pi/orchestrator/config.json" });
+
 const TaskSchema = Type.Object({
   id: Type.String({ description: "Stable task id, e.g. api, ui, tests" }),
   agent: Type.Optional(Type.String({ description: "Worker agent prompt to use. Default: worker" })),
   task: Type.String({ description: "Scoped implementation instructions for this worker" }),
   model: Type.Optional(Type.String({ description: "Optional model override for this worker" })),
+  startupScripts: Type.Optional(ScriptIdsSchema),
+  validationScripts: Type.Optional(ScriptIdsSchema),
+});
+
+const IntegrationScriptsSchema = Type.Object({
+  startupScripts: Type.Optional(ScriptIdsSchema),
+  validationScripts: Type.Optional(ScriptIdsSchema),
 });
 
 function textResult(text, details) {
@@ -61,8 +70,8 @@ export default function piOrchestratorExtension(pi) {
       event.systemPrompt +
       "\n\n# Pi Orchestrator Extension\n" +
       "When the user asks to orchestrate, split, delegate, use workers, use worktrees, merge worker results, or mentions /orchestrate, use the orchestrator tools. " +
-      "Recommended flow: read specs, propose a task decomposition, ask for approval, call orchestrator_dispatch with worktreeMode per-task, then use orchestrator_status, orchestrator_verify, and orchestrator_merge as needed. " +
-      "For per-task worktrees, keep tasks scoped with clear file ownership. Do not use orchestrator tools inside worker processes.\n",
+      "Recommended flow: read specs, inspect .pi/orchestrator/config.json for named scripts, propose a task decomposition with explicit startupScripts/validationScripts per task and integration, ask for approval, call orchestrator_dispatch with worktreeMode per-task, then use orchestrator_status, orchestrator_verify, and orchestrator_merge as needed. " +
+      "Do not auto-detect scripts; choose named scripts explicitly from config and show the effective selections to the user. For per-task worktrees, keep tasks scoped with clear file ownership. Do not use orchestrator tools inside worker processes.\n",
   }));
 
   pi.registerTool({
@@ -77,6 +86,7 @@ export default function piOrchestratorExtension(pi) {
       worktreeMode: Type.Optional(Type.String({ description: "per-task, shared, or none. Default: per-task" })),
       summary: Type.Optional(Type.String({ description: "Plan summary" })),
       planMarkdown: Type.Optional(Type.String({ description: "Full Markdown plan to save as plan.md" })),
+      integration: Type.Optional(IntegrationScriptsSchema),
       tasks: Type.Array(TaskSchema, { description: "Worker tasks" }),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -106,6 +116,7 @@ export default function piOrchestratorExtension(pi) {
       dryRun: Type.Optional(Type.Boolean({ description: "Preview without creating worktrees or modifying files" })),
       requireClean: Type.Optional(Type.Boolean({ description: "Require clean repo before per-task worktrees. Default: true" })),
       maxConcurrency: Type.Optional(Type.Number({ description: "Maximum workers to run concurrently" })),
+      integration: Type.Optional(IntegrationScriptsSchema),
       tasks: Type.Array(TaskSchema, { description: "Worker tasks to run" }),
     }),
     async execute(_id, params, signal, onUpdate, ctx) {
@@ -146,6 +157,8 @@ export default function piOrchestratorExtension(pi) {
     parameters: Type.Object({
       runId: Type.String({ description: "Run id to integrate" }),
       baseRef: Type.Optional(Type.String({ description: "Optional integration base ref override" })),
+      startupScripts: Type.Optional(ScriptIdsSchema),
+      validationScripts: Type.Optional(ScriptIdsSchema),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       try {

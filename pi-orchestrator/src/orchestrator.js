@@ -1,4 +1,4 @@
-const { loadConfig } = require("./config.js");
+const { loadConfig, resolvePhaseScripts, scriptIds } = require("./config.js");
 const {
   branchExists,
   branchFor,
@@ -14,7 +14,7 @@ const {
   requireCleanRepo,
   worktreePathFor,
 } = require("./git.js");
-const { runStartupHooks, runValidationCommands } = require("./hooks.js");
+const { runStartupScripts, runValidationScripts } = require("./hooks.js");
 const { listRuns, loadManifest, runDir, saveManifest, writePlan } = require("./manifest.js");
 const { MockWorkerRunner, PiSubprocessWorkerRunner } = require("./worker-runner.js");
 const { createRunId, ensureDir, fsp, path, pathExists, relPath, slugify } = require("./utils.js");
@@ -66,9 +66,82 @@ function plannedTaskRecord(task, runId, config, repoRoot, worktreeMode) {
     branch,
     worktree,
     status: "pending",
-    startupHooks: [],
+    startupScripts: [],
+    validationScripts: [],
+    startupResults: [],
     validation: [],
   };
+}
+
+function resolveTaskScripts(config, task) {
+  const startup = resolvePhaseScripts(
+    config,
+    task.startupScripts,
+    config.defaults.workerStartupScripts,
+    config.worktrees.startupHooks,
+    `task ${task.id} startupScripts`,
+  );
+  const validation = resolvePhaseScripts(
+    config,
+    task.validationScripts,
+    config.defaults.workerValidationScripts,
+    config.validation.worker,
+    `task ${task.id} validationScripts`,
+  );
+  return { startup, validation };
+}
+
+function resolveIntegrationScripts(config, integrationInput = {}) {
+  const startup = resolvePhaseScripts(
+    config,
+    integrationInput.startupScripts,
+    config.defaults.integrationStartupScripts,
+    config.worktrees.startupHooks,
+    "integration startupScripts",
+  );
+  const validation = resolvePhaseScripts(
+    config,
+    integrationInput.validationScripts,
+    config.defaults.integrationValidationScripts,
+    config.validation.integration,
+    "integration validationScripts",
+  );
+  return { startup, validation };
+}
+
+function resolveRunScripts(config, tasks, integrationInput = {}) {
+  const taskScripts = new Map();
+  for (const task of tasks) taskScripts.set(task.id, resolveTaskScripts(config, task));
+  const integration = resolveIntegrationScripts(config, integrationInput);
+  return { taskScripts, integration };
+}
+
+function namedManifestScriptSelection(config, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return undefined;
+  return ids.every((id) => config.scripts[id]) ? ids : undefined;
+}
+
+function resolveIntegrationScriptsForMerge(config, manifest, input = {}) {
+  return resolveIntegrationScripts(config, {
+    startupScripts:
+      input.startupScripts !== undefined
+        ? input.startupScripts
+        : namedManifestScriptSelection(config, manifest.integration?.startupScripts),
+    validationScripts:
+      input.validationScripts !== undefined
+        ? input.validationScripts
+        : namedManifestScriptSelection(config, manifest.integration?.validationScripts),
+  });
+}
+
+function resolveTaskValidationScriptsForVerify(config, task) {
+  return resolvePhaseScripts(
+    config,
+    namedManifestScriptSelection(config, task.validationScripts),
+    config.defaults.workerValidationScripts,
+    config.validation.worker,
+    `task ${task.id} validationScripts`,
+  );
 }
 
 function manifestSummary(manifest, repoRoot) {
@@ -100,6 +173,7 @@ async function createPlan(input, options = {}) {
   const baseCommit = await getRefCommit(repo.root, baseRef);
   const tasks = normalizeTasks(input.tasks || []);
   const worktreeMode = input.worktreeMode || "per-task";
+  const runScripts = resolveRunScripts(config, tasks, input.integration || {});
   const manifest = {
     schemaVersion: 1,
     runId,
@@ -112,11 +186,19 @@ async function createPlan(input, options = {}) {
     repoRoot: repo.root,
     configPath: config.path,
     worktreeMode,
-    tasks: tasks.map((task) => plannedTaskRecord(task, runId, config, repo.root, worktreeMode)),
+    tasks: tasks.map((task) => {
+      const record = plannedTaskRecord(task, runId, config, repo.root, worktreeMode);
+      const scripts = runScripts.taskScripts.get(task.id);
+      record.startupScripts = scriptIds(scripts.startup);
+      record.validationScripts = scriptIds(scripts.validation);
+      return record;
+    }),
     integration: {
       branch: branchFor(runId, "integration"),
       worktree: worktreePathFor(config.worktrees.root, runId, "integration"),
       status: "pending",
+      startupScripts: scriptIds(runScripts.integration.startup),
+      validationScripts: scriptIds(runScripts.integration.validation),
     },
     events: [{ time: new Date().toISOString(), type: "planned" }],
   };
@@ -150,6 +232,7 @@ async function dispatch(input, options = {}) {
   const worktreeMode = input.worktreeMode || "per-task";
   const runner = createRunner(config, options.runner);
   const maxConcurrency = Math.max(1, Number(input.maxConcurrency || config.workers.maxConcurrency || DEFAULT_MAX_CONCURRENCY));
+  const runScripts = resolveRunScripts(config, tasks, input.integration || {});
 
   const dryManifest = {
     schemaVersion: 1,
@@ -163,11 +246,19 @@ async function dispatch(input, options = {}) {
     repoRoot: repo.root,
     configPath: config.path,
     worktreeMode,
-    tasks: tasks.map((task) => plannedTaskRecord(task, runId, config, repo.root, worktreeMode)),
+    tasks: tasks.map((task) => {
+      const record = plannedTaskRecord(task, runId, config, repo.root, worktreeMode);
+      const scripts = runScripts.taskScripts.get(task.id);
+      record.startupScripts = scriptIds(scripts.startup);
+      record.validationScripts = scriptIds(scripts.validation);
+      return record;
+    }),
     integration: {
       branch: branchFor(runId, "integration"),
       worktree: worktreePathFor(config.worktrees.root, runId, "integration"),
       status: "pending",
+      startupScripts: scriptIds(runScripts.integration.startup),
+      validationScripts: scriptIds(runScripts.integration.validation),
     },
     events: [],
   };
@@ -205,11 +296,12 @@ async function dispatch(input, options = {}) {
         await createWorktree(repo.root, task.worktree, task.branch, baseRef);
         task.status = "setup";
         await saveManifest(repo.root, manifest);
-        task.startupHooks = await runStartupHooks(config, task.worktree, "worker", {
+        const scripts = runScripts.taskScripts.get(task.id);
+        task.startupResults = await runStartupScripts(config, task.worktree, "worker", {
           runId,
           runDir: runDir(repo.root, runId),
           taskId: task.id,
-        });
+        }, scripts.startup);
       }
       task.mockChanges = taskInput.mockChanges;
       task.status = "ready";
@@ -229,7 +321,7 @@ async function dispatch(input, options = {}) {
           agent: task.agent,
           cwd: task.worktree,
           branch: task.branch,
-          startupHooks: task.startupHooks,
+          startupScripts: task.startupResults,
           signal: options.signal,
           model: inputTask.model,
           mockChanges: inputTask.mockChanges,
@@ -238,11 +330,11 @@ async function dispatch(input, options = {}) {
         task.summary = result.summary;
         task.commit = result.commit;
         task.exitCode = result.exitCode;
-        task.validation = await runValidationCommands(config, task.worktree, "worker", {
+        task.validation = await runValidationScripts(config, task.worktree, "worker", {
           runId,
           runDir: runDir(repo.root, runId),
           taskId: task.id,
-        }).catch((error) => {
+        }, runScripts.taskScripts.get(task.id).validation).catch((error) => {
           task.validationError = error.message;
           return error.results || [error.commandResult].filter(Boolean);
         });
@@ -259,7 +351,7 @@ async function dispatch(input, options = {}) {
       } catch (error) {
         task.status = "failed";
         task.error = error.message;
-        if (error.results) task.startupHooks = error.results;
+        if (error.results) task.startupResults = error.results;
       } finally {
         task.completedAt = new Date().toISOString();
         await saveManifest(repo.root, manifest);
@@ -291,17 +383,20 @@ async function mergeRun(input, options = {}) {
     status: "pending",
   };
   manifest.integration = integration;
+  const integrationScripts = resolveIntegrationScriptsForMerge(config, manifest, input);
+  integration.startupScripts = scriptIds(integrationScripts.startup);
+  integration.validationScripts = scriptIds(integrationScripts.validation);
 
   if (!(await pathExists(integration.worktree))) {
     integration.status = "creating_worktree";
     await saveManifest(repo.root, manifest);
     await ensureDir(path.dirname(integration.worktree));
     await createWorktree(repo.root, integration.worktree, integration.branch, input.baseRef || manifest.baseRef || manifest.baseCommit || "HEAD");
-    integration.startupHooks = await runStartupHooks(config, integration.worktree, "integration", {
+    integration.startupResults = await runStartupScripts(config, integration.worktree, "integration", {
       runId: manifest.runId,
       runDir: runDir(repo.root, manifest.runId),
       taskId: "integration",
-    });
+    }, integrationScripts.startup);
   }
 
   integration.status = "merging";
@@ -332,11 +427,11 @@ async function mergeRun(input, options = {}) {
     }
   }
 
-  integration.validation = await runValidationCommands(config, integration.worktree, "integration", {
+  integration.validation = await runValidationScripts(config, integration.worktree, "integration", {
     runId: manifest.runId,
     runDir: runDir(repo.root, manifest.runId),
     taskId: "integration",
-  }).catch((error) => {
+  }, integrationScripts.validation).catch((error) => {
     integration.validationError = error.message;
     return error.results || [error.commandResult].filter(Boolean);
   });
@@ -377,11 +472,11 @@ async function verifyRun(input, options = {}) {
     if (task.worktree && await pathExists(task.worktree)) {
       add(`dirty ${task.id}`, !(await isDirty(task.worktree)), task.worktree);
       if (input.runValidation) {
-        const results = await runValidationCommands(config, task.worktree, "worker", {
+        const results = await runValidationScripts(config, task.worktree, "worker", {
           runId: manifest.runId,
           runDir: runDir(repo.root, manifest.runId),
           taskId: task.id,
-        }).catch((error) => error.results || [error.commandResult].filter(Boolean));
+        }, resolveTaskValidationScriptsForVerify(config, task)).catch((error) => error.results || [error.commandResult].filter(Boolean));
         add(`validation ${task.id}`, !results.some((r) => r.status === "failed" && r.required !== false), results);
       }
     }
@@ -390,7 +485,18 @@ async function verifyRun(input, options = {}) {
     add("integration worktree", await pathExists(manifest.integration.worktree), manifest.integration.worktree);
     if (manifest.integration.branch) add("integration branch", await branchExists(repo.root, manifest.integration.branch), manifest.integration.branch);
     if (manifest.integration.commit) add("integration commit", await commitExists(repo.root, manifest.integration.commit), manifest.integration.commit);
-    if (await pathExists(manifest.integration.worktree)) add("integration dirty", !(await isDirty(manifest.integration.worktree)), manifest.integration.worktree);
+    if (await pathExists(manifest.integration.worktree)) {
+      add("integration dirty", !(await isDirty(manifest.integration.worktree)), manifest.integration.worktree);
+      if (input.runValidation) {
+        const integrationScripts = resolveIntegrationScriptsForMerge(config, manifest, {});
+        const results = await runValidationScripts(config, manifest.integration.worktree, "integration", {
+          runId: manifest.runId,
+          runDir: runDir(repo.root, manifest.runId),
+          taskId: "integration",
+        }, integrationScripts.validation).catch((error) => error.results || [error.commandResult].filter(Boolean));
+        add("integration validation", !results.some((r) => r.status === "failed" && r.required !== false), results);
+      }
+    }
   }
   return { ok: checks.every((check) => check.ok), checks, manifest };
 }

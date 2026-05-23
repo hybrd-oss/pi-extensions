@@ -53,25 +53,22 @@ test("orchestrator smoke: mock workers, worktrees, hooks, integration merge, ver
         {
           worktrees: {
             root: "../repo-orch-worktrees",
-            startupHooks: [
-              {
-                name: "record hook",
-                command: hookCommand,
-                timeoutSeconds: 10,
-                required: true,
-                runFor: ["worker", "integration"],
-              },
-            ],
           },
-          validation: {
-            worker: [{ name: "inside git", command: "git rev-parse --is-inside-work-tree", timeoutSeconds: 10 }],
-            integration: [
-              {
-                name: "integrated files exist",
-                command: "test -f src/add.ts && test -f src/subtract.ts && test -f test/math.test.ts",
-                timeoutSeconds: 10,
-              },
-            ],
+          scripts: {
+            "record:startup": {
+              description: "Record that startup ran",
+              command: hookCommand,
+              timeoutSeconds: 10,
+              required: true,
+            },
+            "worker:inside-git": {
+              command: "git rev-parse --is-inside-work-tree",
+              timeoutSeconds: 10,
+            },
+            "integration:files": {
+              command: "test -f src/add.ts && test -f src/subtract.ts && test -f test/math.test.ts",
+              timeoutSeconds: 10,
+            },
           },
         },
         null,
@@ -91,11 +88,15 @@ test("orchestrator smoke: mock workers, worktrees, hooks, integration merge, ver
           {
             id: "add",
             task: "Implement add.ts",
+            startupScripts: ["record:startup"],
+            validationScripts: ["worker:inside-git"],
             mockChanges: [{ path: "src/add.ts", content: "export function add(a: number, b: number) { return a + b; }\n" }],
           },
           {
             id: "subtract",
             task: "Implement subtract.ts",
+            startupScripts: ["record:startup"],
+            validationScripts: ["worker:inside-git"],
             mockChanges: [
               { path: "src/subtract.ts", content: "export function subtract(a: number, b: number) { return a - b; }\n" },
             ],
@@ -103,9 +104,15 @@ test("orchestrator smoke: mock workers, worktrees, hooks, integration merge, ver
           {
             id: "tests",
             task: "Add math tests",
+            startupScripts: ["record:startup"],
+            validationScripts: ["worker:inside-git"],
             mockChanges: [{ path: "test/math.test.ts", content: "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('math', () => assert.equal(1 + 1, 2));\n" }],
           },
         ],
+        integration: {
+          startupScripts: ["record:startup"],
+          validationScripts: ["integration:files"],
+        },
       },
       { cwd: repo, runner: new MockWorkerRunner() },
     );
@@ -117,7 +124,9 @@ test("orchestrator smoke: mock workers, worktrees, hooks, integration merge, ver
       assert.ok(task.commit, `task ${task.id} should record commit`);
       assert.ok(await branchExists(repo, task.branch), `branch ${task.branch} should exist`);
       await fs.access(task.worktree);
-      assert.equal(task.startupHooks[0].status, "succeeded");
+      assert.deepEqual(task.startupScripts, ["record:startup"]);
+      assert.deepEqual(task.validationScripts, ["worker:inside-git"]);
+      assert.equal(task.startupResults[0].status, "succeeded");
       assert.equal(task.validation[0].status, "succeeded");
     }
 
