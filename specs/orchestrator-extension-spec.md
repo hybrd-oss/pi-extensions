@@ -191,37 +191,9 @@ Each worker gets:
 - instructions to commit its changes
 - instructions to output a summary and changed files
 
-## Worktree Startup Hooks
+## Orchestrator Scripts: Startup and Validation
 
-Users need a way to run setup commands whenever the orchestrator creates a new worktree.
-
-Examples:
-
-- `npm install`
-- `pnpm install`
-- `yarn install`
-- `poetry install`
-- `bundle install`
-- `mise install`
-- `direnv allow`
-- project-specific bootstrap scripts
-
-Recommended config file:
-
-```json
-{
-  "worktrees": {
-    "root": "../repo-orch-worktrees",
-    "startupHooks": [
-      {
-        "name": "install dependencies",
-        "command": "npm install",
-        "timeoutSeconds": 600
-      }
-    ]
-  }
-}
-```
+Users need a way to define reusable scripts and explicitly select which scripts run for a given orchestrator run, worker task, review, merge, or integration. This must not rely on auto-detection. In monorepos, different workstreams often need different setup and validation commands, such as frontend setup, backend setup, frontend tests, backend tests, database migrations, or package-specific linting.
 
 Suggested location:
 
@@ -229,60 +201,118 @@ Suggested location:
 .pi/orchestrator/config.json
 ```
 
-Hook behavior:
-
-1. Run after `git worktree add` succeeds.
-2. Run before the worker agent starts.
-3. Run with `cwd` set to the new worktree path.
-4. Run hooks sequentially by default.
-5. Capture stdout/stderr into the run manifest.
-6. Stop worker startup if a required hook fails.
-7. Allow optional hooks that warn but do not fail the run.
-
-Extended hook shape:
+Recommended config shape:
 
 ```json
 {
-  "name": "install python dependencies",
-  "command": "poetry install",
-  "timeoutSeconds": 900,
-  "required": true,
-  "env": {
-    "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+  "worktrees": {
+    "root": "../repo-orch-worktrees"
   },
-  "runFor": ["worker", "integration"]
+  "scripts": {
+    "frontend:setup": {
+      "description": "Install frontend dependencies",
+      "command": "pnpm install",
+      "cwd": "apps/frontend",
+      "timeoutSeconds": 600,
+      "required": true
+    },
+    "backend:setup": {
+      "description": "Install backend dependencies",
+      "command": "poetry install",
+      "cwd": "services/backend",
+      "timeoutSeconds": 900,
+      "required": true,
+      "env": {
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1"
+      }
+    },
+    "frontend:test": {
+      "command": "pnpm test",
+      "cwd": "apps/frontend",
+      "timeoutSeconds": 600
+    },
+    "backend:test": {
+      "command": "pytest",
+      "cwd": "services/backend",
+      "timeoutSeconds": 600
+    }
+  },
+  "defaults": {
+    "workerStartupScripts": [],
+    "workerValidationScripts": [],
+    "integrationStartupScripts": [],
+    "integrationValidationScripts": []
+  }
 }
 ```
 
-Fields:
+Script fields:
 
-- `name`: human-readable label.
 - `command`: shell command to run.
+- `description`: optional human-readable explanation.
+- `cwd`: optional path relative to the worktree root. Default is the worktree root.
 - `timeoutSeconds`: optional timeout.
-- `required`: if `true`, hook failure blocks worker startup. Default `true`.
+- `required`: if `true`, failure blocks the current phase. Default `true`.
 - `env`: extra environment variables.
-- `runFor`: optional list controlling which worktree types run this hook.
-  - `worker`
-  - `integration`
-  - `review`
-  - `merge`
 
-Potential future additions:
+Dispatch should allow explicit script selection per task and for integration:
 
-- `condition`: only run when certain files exist, such as `package.json` or `pyproject.toml`.
-- `cacheKey`: skip hook if dependency lockfile has not changed.
-- `parallel`: allow independent hooks to run concurrently.
-- `interactive`: allow hooks that require terminal interaction, default `false`.
+```ts
+orchestrator_dispatch({
+  runName: "monorepo-feature",
+  worktreeMode: "per-task",
+  tasks: [
+    {
+      id: "frontend-ui",
+      task: "Implement the frontend UI portion...",
+      startupScripts: ["frontend:setup"],
+      validationScripts: ["frontend:test"]
+    },
+    {
+      id: "backend-api",
+      task: "Implement the backend API portion...",
+      startupScripts: ["backend:setup"],
+      validationScripts: ["backend:test"]
+    }
+  ],
+  integration: {
+    startupScripts: ["frontend:setup", "backend:setup"],
+    validationScripts: ["frontend:test", "backend:test"]
+  }
+})
+```
 
-The orchestrator should include hook results in the worker prompt, for example:
+Script behavior:
+
+1. Startup scripts run after `git worktree add` succeeds and before the worker, reviewer, merger, or integration phase starts.
+2. Worker validation scripts run inside each worker worktree after the worker finishes.
+3. Integration validation scripts run inside the integration worktree after worker branches are merged.
+4. Scripts run sequentially by default in the order selected.
+5. Each script runs with `cwd` resolved relative to the current worktree root.
+6. Capture stdout/stderr, exit code, duration, timeout state, and selected script id into the run manifest.
+7. Stop the current phase if a required script fails.
+8. Optional scripts (`required: false`) warn but do not fail the run.
+9. Unknown script ids should fail before any worktree or worker is started.
+
+The main agent should choose script ids explicitly while planning and ask for user approval before dispatch. For example, it should say:
+
+```text
+Task frontend-ui will run startup [frontend:setup] and validation [frontend:test].
+Task backend-api will run startup [backend:setup] and validation [backend:test].
+Integration will run startup [frontend:setup, backend:setup] and validation [frontend:test, backend:test].
+```
+
+The orchestrator should include startup script results in the worker prompt, for example:
 
 ```text
 Worktree setup completed.
-Startup hooks:
-- install dependencies: succeeded in 42s
+Startup scripts:
+- frontend:setup: succeeded in 42s
 ```
 
-If setup fails, the worker should not start. The orchestrator should report the failing hook and ask the user whether to retry, skip, edit config, or abort.
+If setup fails, the worker should not start. The orchestrator should report the failing script and ask the user whether to retry, skip optional scripts, edit config, or abort.
+
+Legacy note: the earlier `worktrees.startupHooks` and `validation.worker` / `validation.integration` list shape can be supported temporarily for backward compatibility, but the preferred model is named scripts plus explicit per-run and per-task selection.
 
 ## Planning Branch and Spec Docs
 
@@ -512,10 +542,10 @@ The smoke test should:
 2. Initialize a Git repo.
 3. Add a tiny fixture project.
 4. Commit a spec file.
-5. Create an orchestrator config with startup hooks.
-6. Start an orchestrator run using mock workers.
+5. Create an orchestrator config with named startup and validation scripts.
+6. Start an orchestrator run using mock workers with explicit script selections.
 7. Verify worktrees were created.
-8. Verify startup hooks ran.
+8. Verify selected startup scripts ran.
 9. Verify worker branches were created.
 10. Verify mock workers committed changes.
 11. Run integration merge.
@@ -584,7 +614,7 @@ Dry run should report:
 - base branch/ref
 - worktree paths
 - branch names
-- startup hooks that would run
+- selected startup and validation scripts that would run for each task and integration
 - worker commands that would be spawned
 - merge plan
 
@@ -610,37 +640,27 @@ It should check:
 - all declared worktrees exist
 - worker branches exist
 - worker commits exist
-- startup hooks completed or failed as recorded
+- selected startup scripts completed or failed as recorded
 - dirty worktrees are reported
 - integration branch status
-- configured validation commands pass
+- selected validation scripts pass
 
-### Validation Commands
+### Validation Scripts
 
-In addition to startup hooks, users should be able to define verification commands.
+Validation uses the same named script model described in [Orchestrator Scripts: Startup and Validation](#orchestrator-scripts-startup-and-validation).
 
-Example config:
+Validation scripts are not global auto-detected checks. They are explicitly selected by the orchestrator plan for each task and for integration:
 
-```json
-{
-  "validation": {
-    "worker": [
-      { "name": "typecheck", "command": "npm run typecheck", "timeoutSeconds": 300 },
-      { "name": "unit tests", "command": "npm test", "timeoutSeconds": 600 }
-    ],
-    "integration": [
-      { "name": "full test suite", "command": "npm test", "timeoutSeconds": 900 }
-    ]
-  }
-}
-```
+- `task.validationScripts` runs inside that task's worker worktree after the worker finishes.
+- `integration.validationScripts` runs inside the integration worktree after merges.
+- Default validation script selections may be configured, but the main agent should still present the effective script list for user approval.
 
 Behavior:
 
-- Worker validation runs inside each worker worktree after the worker finishes.
-- Integration validation runs inside the integration worktree after merges.
-- Results are captured in the manifest.
+- Results are captured in the manifest with script id, command, cwd, stdout/stderr, exit code, duration, and timeout state.
 - Failures are visible in status and summaries.
+- Required validation script failures mark the worker or integration phase as validation failed.
+- Optional validation script failures are warnings.
 - Validation results are included in follow-up prompts if a worker needs to fix its branch.
 
 ### Implementation-Agent Acceptance Criteria
