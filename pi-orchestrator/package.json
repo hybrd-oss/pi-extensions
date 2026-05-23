@@ -1,0 +1,19 @@
+{
+  "name": "@mbattagl/pi-orchestrator",
+  "version": "0.1.0",
+  "description": "Orchestrator extension for pi: dispatch worker agents in git worktrees and integrate their results",
+  "keywords": ["pi-package", "pi", "orchestrator", "subagent", "worktree"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hybrd-oss/pi-extensions"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "prompts": ["./prompts"]
+  }
+}

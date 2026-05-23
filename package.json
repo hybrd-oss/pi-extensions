@@ -3,7 +3,18 @@
   "version": "1.0.0",
   "description": "Pi extensions by mibattaglia",
   "keywords": ["pi-package"],
+  "scripts": {
+    "test": "node --test pi-orchestrator/test/*.test.js",
+    "test:orchestrator-smoke": "node --test pi-orchestrator/test/orchestrator-smoke.test.js",
+    "test:orchestrator-real": "PI_ORCHESTRATOR_REAL_E2E=1 node --test pi-orchestrator/test/orchestrator-real.test.js"
+  },
   "pi": {
-    "extensions": ["pi-dcg/extensions", "pi-web-tools/extensions", "pi-ask-question/extensions"]
+    "extensions": [
+      "pi-dcg/extensions",
+      "pi-web-tools/extensions",
+      "pi-ask-question/extensions",
+      "pi-orchestrator/extensions"
+    ],
+    "prompts": ["pi-orchestrator/prompts"]
   }
 }
