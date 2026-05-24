@@ -1,34 +1,41 @@
 # pi-orchestrator
 
-A Pi extension package for decomposing large implementation requests into worker tasks, running workers in isolated git worktrees, recording run state, and merging results into an integration worktree.
+A Pi extension package for Cursor-like local multitask mode: decompose large requests into persistent Pi worker sessions, run them in isolated git worktrees, message/monitor them while the main chat remains usable, and later review/merge/apply their results.
 
 ## Tools
 
-- `orchestrator_plan` — persist an approved plan and task list.
-- `orchestrator_dispatch` — create worktrees, run startup hooks, dispatch workers, run worker validation, and write a manifest.
-- `orchestrator_status` — list runs or show one run.
-- `orchestrator_merge` — create an integration worktree and merge completed worker branches.
-- `orchestrator_verify` — verify manifests, worktrees, branches, commits, dirty state, and optional validation.
-- `orchestrator_cleanup` — remove run worktrees.
+- `multitask_start` — create a multitask run, local worktrees, and persistent worker sessions, then return immediately.
+- `multitask_spawn` — add a worker to an existing run. *(Backend placeholder.)*
+- `multitask_message` — send a steer/follow-up/prompt message to a worker session.
+- `multitask_status` — list runs or show one run, including daemon health.
+- `multitask_diff` — show task/integration diffs and changed-file summaries.
+- `multitask_review` — run deterministic no-credit review checks and mark tasks ready/needs-changes.
+- `multitask_merge` — merge ready tasks into integration.
+- `multitask_apply` — apply integration back to the foreground checkout.
+- `multitask_cancel` — cancel a worker or whole run.
 
 ## Commands
 
-- `/orchestrate <request>`
-- `/orch-config [show|validate|init|add-script|set-defaults]`
-- `/orchestrator-config [show|validate|init|add-script|set-defaults]`
-- `/orch-status [run-id]`
-- `/orch-merge <run-id>`
-- `/orch-verify <run-id>`
-- `/orch-cleanup <run-id>`
+- `/multitask <request>`
+- `/mt <request>`
+- `/mt-status [run-id]`
+- `/mt-send <run-id> <task-id> [message]`
+- `/mt-diff <run-id> [task-id]`
+- `/mt-review <run-id> [task-id]`
+- `/mt-merge <run-id> [task-id...]`
+- `/mt-apply <run-id>`
+- `/mt-cancel <run-id> [task-id]`
+- `/mt-cleanup <run-id> [--state] [--dry-run]`
+- `/mt-config [show|validate|init|add-script|set-defaults]`
 
 ## Config
 
-Create `.pi/orchestrator/config.json` in a project:
+Create `.pi/multitask/config.json` in a project:
 
 ```json
 {
   "worktrees": {
-    "root": "../repo-orch-worktrees"
+    "root": "../repo-multitask-worktrees"
   },
   "scripts": {
     "frontend:setup": {
@@ -61,14 +68,14 @@ Create `.pi/orchestrator/config.json` in a project:
 }
 ```
 
-Select scripts explicitly in `orchestrator_dispatch` per task and integration:
+Select scripts explicitly in `multitask_start` per task and integration:
 
 ```json
 {
   "tasks": [
     {
       "id": "frontend-ui",
-      "task": "Implement UI changes",
+      "prompt": "Implement UI changes",
       "startupScripts": ["frontend:setup"],
       "validationScripts": ["frontend:test"]
     }
@@ -80,31 +87,51 @@ Select scripts explicitly in `orchestrator_dispatch` per task and integration:
 }
 ```
 
-By default, per-task dispatch requires a clean git repo so uncommitted planning/spec files are not silently absent from worker worktrees.
+Do not auto-detect startup or validation scripts; choose named scripts explicitly and show the selections to the user before starting workers.
 
 ## State
 
-Runs are persisted under:
+Runs and daemon state are persisted under:
 
 ```text
-.pi/orchestrator/runs/<run-id>/manifest.json
-.pi/orchestrator/runs/<run-id>/plan.md
+.pi/multitask/daemon.sock
+.pi/multitask/daemon.pid
+.pi/multitask/runs/<run-id>/manifest.json
+.pi/multitask/runs/<run-id>/plan.md
+.pi/multitask/runs/<run-id>/events.jsonl
+.pi/multitask/runs/<run-id>/tasks/<task-id>/state.json
+.pi/multitask/runs/<run-id>/tasks/<task-id>/events.jsonl
+.pi/multitask/runs/<run-id>/tasks/<task-id>/transcript.jsonl
+.pi/multitask/runs/<run-id>/tasks/<task-id>/session/
 ```
 
 Worker branches use:
 
 ```text
-orch/<run-id>/<task-id>
-orch/<run-id>/integration
+mt/<run-id>/<task-id>
+mt/<run-id>/integration
 ```
+
+## Robustness and cleanup
+
+Phase 6 adds defensive daemon lifecycle helpers:
+
+- stale `.pi/multitask/daemon.pid` / `daemon.sock` detection and best-effort cleanup;
+- status summaries that include daemon health (`running`, `stale`, `degraded`, or `stopped`);
+- process-exit cleanup hooks for daemon socket/pid files;
+- worker-session stop hooks that drain persistence before forgetting sessions;
+- cleanup helpers for run worktrees/state, exposed through `/mt-cleanup`.
+
+Use `/mt-cleanup <run-id> --dry-run` to preview targets. Omit `--dry-run` to remove selected worktrees. Add `--state` to also remove `.pi/multitask/runs/<run-id>`.
 
 ## Testing
 
 From the repository root:
 
 ```bash
+npm run test:multitask-no-credit
 npm test
 npm run test:orchestrator-smoke
 ```
 
-Both use mock workers and do not consume LLM/API credits. Real Pi worker E2E testing is intentionally optional.
+`test:multitask-no-credit` is the Phase 6 unit suite. It does not create git worktrees/branches, does not spawn real Pi workers, and does not consume LLM/API credits. `test:orchestrator-smoke` uses mock workers but creates temporary git worktrees. Real Pi worker E2E testing is intentionally optional via `npm run test:orchestrator-real`.

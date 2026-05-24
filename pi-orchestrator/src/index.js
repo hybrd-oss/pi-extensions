@@ -5,4 +5,5 @@ module.exports = {
   ...require("./manifest.js"),
   ...require("./worker-runner.js"),
   ...require("./orchestrator.js"),
+  multitask: require("./multitask/index.js"),
 };

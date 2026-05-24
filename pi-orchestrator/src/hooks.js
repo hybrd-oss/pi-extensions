@@ -29,11 +29,11 @@ async function runCommandList(commands, worktreeRoot, type, context = {}) {
     const startedAt = new Date().toISOString();
     const env = {
       ...(command.env || {}),
-      PI_ORCHESTRATOR_RUN_ID: context.runId,
-      PI_ORCHESTRATOR_RUN_DIR: context.runDir,
-      PI_ORCHESTRATOR_TASK_ID: context.taskId,
-      PI_ORCHESTRATOR_WORKTREE_TYPE: type,
-      PI_ORCHESTRATOR_WORKTREE: worktreeRoot,
+      PI_MULTITASK_RUN_ID: context.runId,
+      PI_MULTITASK_RUN_DIR: context.runDir,
+      PI_MULTITASK_TASK_ID: context.taskId,
+      PI_MULTITASK_WORKTREE_TYPE: type,
+      PI_MULTITASK_WORKTREE: worktreeRoot,
     };
     const result = await runCommand(command.command, [], {
       cwd: commandCwd,
@@ -77,16 +77,6 @@ async function runValidationScripts(_config, cwd, type, context, scripts) {
   return runCommandList(scripts, cwd, type, context);
 }
 
-// Legacy names kept for callers/tests that still import them.
-async function runStartupHooks(config, cwd, type, context) {
-  return runCommandList(config.worktrees.startupHooks, cwd, type, context);
-}
-
-async function runValidationCommands(config, cwd, type, context) {
-  const list = type === "integration" ? config.validation.integration : config.validation.worker;
-  return runCommandList(list, cwd, type, context);
-}
-
 function summarizeCommandResults(results) {
   if (!results || results.length === 0) return "none";
   return results
@@ -102,9 +92,7 @@ module.exports = {
   hookApplies,
   resolveScriptCwd,
   runCommandList,
-  runStartupHooks,
   runStartupScripts,
-  runValidationCommands,
   runValidationScripts,
   summarizeCommandResults,
 };

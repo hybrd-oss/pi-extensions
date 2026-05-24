@@ -8,6 +8,9 @@
     "type": "git",
     "url": "https://github.com/hybrd-oss/pi-extensions"
   },
+  "scripts": {
+    "test:no-credit": "node --test test/multitask-no-credit.test.js"
+  },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "typebox": "*"

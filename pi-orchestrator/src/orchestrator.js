@@ -78,14 +78,12 @@ function resolveTaskScripts(config, task) {
     config,
     task.startupScripts,
     config.defaults.workerStartupScripts,
-    config.worktrees.startupHooks,
     `task ${task.id} startupScripts`,
   );
   const validation = resolvePhaseScripts(
     config,
     task.validationScripts,
     config.defaults.workerValidationScripts,
-    config.validation.worker,
     `task ${task.id} validationScripts`,
   );
   return { startup, validation };
@@ -96,14 +94,12 @@ function resolveIntegrationScripts(config, integrationInput = {}) {
     config,
     integrationInput.startupScripts,
     config.defaults.integrationStartupScripts,
-    config.worktrees.startupHooks,
     "integration startupScripts",
   );
   const validation = resolvePhaseScripts(
     config,
     integrationInput.validationScripts,
     config.defaults.integrationValidationScripts,
-    config.validation.integration,
     "integration validationScripts",
   );
   return { startup, validation };
@@ -139,7 +135,6 @@ function resolveTaskValidationScriptsForVerify(config, task) {
     config,
     namedManifestScriptSelection(config, task.validationScripts),
     config.defaults.workerValidationScripts,
-    config.validation.worker,
     `task ${task.id} validationScripts`,
   );
 }

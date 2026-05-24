@@ -47,7 +47,7 @@ function buildWorkerPrompt(input) {
     "",
     "Worktree setup completed.",
     "Startup scripts:",
-    summarizeCommandResults(input.startupScripts || input.startupHooks),
+    summarizeCommandResults(input.startupScripts),
     "",
     "# Delegated Task",
     input.task,
@@ -55,7 +55,7 @@ function buildWorkerPrompt(input) {
     "# Required Completion Contract",
     "- Implement only this task's scope unless coordination is explicitly required.",
     "- Run relevant validation commands when practical.",
-    "- Commit your changes before finishing. Use a concise message such as `orchestrator: complete <task-id>`.",
+    "- Commit your changes before finishing. Use a concise message such as `multitask: complete <task-id>`.",
     "- Finish with Markdown sections: `## Completed`, `## Files Changed`, `## Validation`, `## Commit`, and `## Notes`.",
   ].join("\n");
 }
@@ -68,7 +68,7 @@ class PiSubprocessWorkerRunner {
   }
 
   async runWorker(input) {
-    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pi-orchestrator-worker-"));
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "pi-multitask-worker-"));
     const promptPath = path.join(tmpDir, "worker-prompt.md");
     await fsp.writeFile(promptPath, buildWorkerPrompt(input), { encoding: "utf8", mode: 0o600 });
 
@@ -92,7 +92,7 @@ class PiSubprocessWorkerRunner {
       const result = await new Promise((resolve) => {
         const proc = spawn(invocation.command, invocation.args, {
           cwd: input.cwd,
-          env: { ...process.env, PI_ORCHESTRATOR_ROLE: "worker" },
+          env: { ...process.env, PI_MULTITASK_ROLE: "worker" },
           shell: false,
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -176,7 +176,7 @@ class MockWorkerRunner {
     const changedPaths = [];
     const changes = Array.isArray(input.mockChanges) && input.mockChanges.length > 0
       ? input.mockChanges
-      : [{ path: path.join("orchestrator-mock", `${slugify(input.taskId)}.md`), content: `# ${input.taskId}\n\n${input.task}\n` }];
+      : [{ path: path.join("multitask-mock", `${slugify(input.taskId)}.md`), content: `# ${input.taskId}\n\n${input.task}\n` }];
 
     for (const change of changes) {
       const rel = String(change.path).replace(/^@/, "");
@@ -186,7 +186,7 @@ class MockWorkerRunner {
       changedPaths.push(rel);
     }
 
-    const commitResult = await addAndCommit(input.cwd, changedPaths, `orchestrator: mock complete ${input.taskId}`);
+    const commitResult = await addAndCommit(input.cwd, changedPaths, `multitask: mock complete ${input.taskId}`);
     return {
       status: "completed",
       exitCode: 0,

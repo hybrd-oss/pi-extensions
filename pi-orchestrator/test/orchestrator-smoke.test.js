@@ -25,16 +25,16 @@ async function writeFileEnsured(file, content) {
   await fs.writeFile(file, content, "utf8");
 }
 
-test("orchestrator smoke: mock workers, worktrees, hooks, integration merge, verify, cleanup", async () => {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-orchestrator-smoke-"));
+test("multitask smoke: mock workers, worktrees, hooks, integration merge, verify, cleanup", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-multitask-smoke-"));
   const repo = path.join(tempRoot, "repo");
   const runId = "2026-05-23-smoke";
 
   try {
     await fs.mkdir(repo, { recursive: true });
     await execOk(repo, "git", ["init"]);
-    await execOk(repo, "git", ["config", "user.email", "orchestrator@example.test"]);
-    await execOk(repo, "git", ["config", "user.name", "Orchestrator Test"]);
+    await execOk(repo, "git", ["config", "user.email", "multitask@example.test"]);
+    await execOk(repo, "git", ["config", "user.name", "Multitask Test"]);
 
     await writeFileEnsured(path.join(repo, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }, null, 2));
     await writeFileEnsured(path.join(repo, "src", "math.ts"), "export const zero = 0;\n");
@@ -43,16 +43,16 @@ test("orchestrator smoke: mock workers, worktrees, hooks, integration merge, ver
     const hookCommand = [
       "node -e",
       JSON.stringify(
-        "const fs=require('fs');const path=require('path');fs.mkdirSync(process.env.PI_ORCHESTRATOR_RUN_DIR,{recursive:true});fs.appendFileSync(path.join(process.env.PI_ORCHESTRATOR_RUN_DIR,'hooks.log'),process.env.PI_ORCHESTRATOR_WORKTREE_TYPE+'\\n');",
+        "const fs=require('fs');const path=require('path');fs.mkdirSync(process.env.PI_MULTITASK_RUN_DIR,{recursive:true});fs.appendFileSync(path.join(process.env.PI_MULTITASK_RUN_DIR,'hooks.log'),process.env.PI_MULTITASK_WORKTREE_TYPE+'\\n');",
       ),
     ].join(" ");
 
     await writeFileEnsured(
-      path.join(repo, ".pi", "orchestrator", "config.json"),
+      path.join(repo, ".pi", "multitask", "config.json"),
       JSON.stringify(
         {
           worktrees: {
-            root: "../repo-orch-worktrees",
+            root: "../repo-multitask-worktrees",
           },
           scripts: {
             "record:startup": {

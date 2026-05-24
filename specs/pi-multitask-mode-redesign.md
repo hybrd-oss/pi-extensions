@@ -21,7 +21,7 @@ main Pi chat
   ├─ spawn multitask run
   ├─ spawn/add workers
   ├─ send follow-up messages to workers
-  ├─ inspect status/logs/diffs
+  ├─ inspect status and diffs
   ├─ review worker output
   ├─ merge/apply selected results
   └─ keep chatting while workers run
@@ -71,11 +71,10 @@ pi --mode rpc \
   --tools read,bash,edit,write,grep,find,ls
 ```
 
-Use environment guards such as:
+Use this environment guard:
 
 ```text
 PI_MULTITASK_ROLE=worker
-PI_ORCHESTRATOR_ROLE=worker
 ```
 
 to prevent worker processes from spawning their own worker fleets unless explicitly allowed.
@@ -274,18 +273,6 @@ Show runs/tasks.
 }
 ```
 
-### `multitask_logs`
-
-Show recent worker events/transcript.
-
-```ts
-{
-  runId: string
-  taskId: string
-  lines?: number
-}
-```
-
 ### `multitask_diff`
 
 Show changed files and diff summary.
@@ -359,7 +346,6 @@ Management commands:
 /mt-status [run-id]
 /mt-panel
 /mt-send <run-id> <task-id>
-/mt-logs <run-id> <task-id>
 /mt-diff <run-id> [task-id]
 /mt-review <run-id> [task-id]
 /mt-merge <run-id> [task-id...]
@@ -425,7 +411,6 @@ Last events:
 Actions:
 [m] send message
 [d] show diff
-[l] logs
 [r] review
 [c] cancel
 ```
@@ -445,7 +430,7 @@ Preferred flow:
 3. Tell the user the proposed workers and script selections.
 4. After approval, call multitask_start.
 5. Continue helping while workers run.
-6. Use multitask_status, multitask_logs, multitask_diff, and multitask_message to monitor and steer workers.
+6. Use multitask_status, multitask_diff, and multitask_message to monitor and steer workers.
 7. Review before merge.
 8. Merge/apply only after user approval.
 
@@ -478,12 +463,12 @@ Remove or heavily change:
 
 Workers should update this section using `[todo]`, `[in progress]`, and `[complete]`.
 
-- [todo] Phase 1: Core backend/state model
-- [todo] Phase 2: Pi RPC worker sessions and daemon messaging
-- [todo] Phase 3: Extension tools, commands, and system prompt
-- [todo] Phase 4: TUI status widget/panel
-- [todo] Phase 5: Review, merge, apply flows
-- [todo] Phase 6: Robustness and tests
+- [complete] Phase 1: Core backend/state model
+- [complete] Phase 2: Pi RPC worker sessions and daemon messaging
+- [complete] Phase 3: Extension tools, commands, and system prompt
+- [complete] Phase 4: TUI status widget/panel
+- [complete] Phase 5: Review, merge, apply flows
+- [complete] Phase 6: Robustness and tests
 
 ## Implementation Phases
 
@@ -514,7 +499,7 @@ Workers should update this section using `[todo]`, `[in progress]`, and `[comple
 
 - Add compact status widget.
 - Add `/mt-panel` overlay.
-- Support inspect, message, logs, diff, cancel, and review actions.
+- Support inspect, message, diff, cancel, and review actions.
 
 ### Phase 5: Review and Merge
 
