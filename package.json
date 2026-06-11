@@ -14,8 +14,10 @@
       "pi-dcg/extensions",
       "pi-web-tools/extensions",
       "pi-ask-question/extensions",
-      "pi-orchestrator/extensions"
+      "pi-orchestrator/extensions",
+      "pi-caveman/extensions"
     ],
+    "skills": ["pi-caveman/skills"],
     "prompts": ["pi-orchestrator/prompts"]
   }
 }

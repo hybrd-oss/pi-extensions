@@ -34,6 +34,10 @@ Provides `web_search` and `web_fetch` tools for searching and fetching web conte
 
 Provides an interactive `ask_question` tool for asking users multiple-choice or freeform questions during agent conversations. Multiple choice shows an arrow-key selector; freeform falls back to text input.
 
+### [pi-caveman](./pi-caveman)
+
+Provides caveman mode (`/caveman`) plus terse commit/review/compress/help skills. When caveman mode is active, spawned `subagent` tasks inherit caveman style automatically. Cavecrew/caveman-specific agents are intentionally not shipped.
+
 ### [pi-orchestrator](./pi-orchestrator)
 
 Provides orchestrator tools and commands for splitting large specs into worker tasks, running workers in per-task git worktrees, recording manifests, verifying runs, and merging completed worker branches into an integration worktree.
