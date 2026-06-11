@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Porchestrator Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">Pi Multitask mode</div>
+      <h1>Porchestrator Dashboard</h1>
+    </div>
+    <div id="connection" class="pill muted">connecting…</div>
+  </header>
+
+  <nav class="tabs" aria-label="Dashboard sections">
+    <button data-view="runs" class="active">Runs</button>
+    <button data-view="active">Active Run</button>
+    <button data-view="doctor">Doctor</button>
+    <button data-view="agents">Agents</button>
+    <button data-view="config">Settings/Config</button>
+  </nav>
+
+  <main>
+    <section id="notice" class="notice hidden"></section>
+    <section id="content" class="content"></section>
+  </main>
+
+  <template id="empty-template">
+    <div class="empty">
+      <h2>No Porchestrator runs found</h2>
+      <p>The dashboard is ready. Start a run with <code>multitask_start</code> or inspect Doctor/Config readiness.</p>
+    </div>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

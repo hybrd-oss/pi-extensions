@@ -128,7 +128,7 @@ function inferStateStatus(data) {
 
 function buildDefaultWorkerSystemPrompt({ manifest, task }) {
   return [
-    "# Pi Multitask Worker",
+    "# Porchestrator Worker",
     "",
     "You are a persistent local Pi worker session managed by Pi multitask mode.",
     "",

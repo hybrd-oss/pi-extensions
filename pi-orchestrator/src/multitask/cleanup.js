@@ -51,22 +51,74 @@ function validateCleanupTarget(manifest, target, input = {}) {
   return { ok: true };
 }
 
+function cleanupFailureReason(result, target) {
+  const output = [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim();
+  return [
+    `git worktree remove failed for ${target.path}${typeof result?.exitCode === "number" ? ` (exit ${result.exitCode})` : ""}.`,
+    output || undefined,
+    "Inspect the path, fix permissions or in-progress git operations, then retry cleanup. Run `git worktree prune` after any manual deletion.",
+  ].filter(Boolean).join("\n");
+}
+
+async function pruneWorktreeMetadata(repoRoot, input = {}) {
+  if (input.gitWorktreePrune === false) return { status: "skipped", reason: "gitWorktreePrune:false" };
+  const result = await git(repoRoot, ["worktree", "prune"], {
+    allowFailure: true,
+    timeoutSeconds: input.timeoutSeconds || 120,
+  });
+  return {
+    status: result.exitCode === 0 ? "succeeded" : "failed",
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    message: result.exitCode === 0 ? "Pruned stale git worktree metadata." : cleanupFailureReason(result, { path: "git worktree prune" }),
+  };
+}
+
 async function removeWorktreeTarget(repoRoot, target, input = {}) {
   if (!(await pathExists(target.path))) return { ...target, status: "missing" };
+  let removeResult;
   if (input.gitWorktreeRemove !== false) {
-    const result = await git(repoRoot, ["worktree", "remove", "--force", target.path], {
+    removeResult = await git(repoRoot, ["worktree", "remove", "--force", target.path], {
       allowFailure: true,
       timeoutSeconds: input.timeoutSeconds || 120,
     });
-    if (result.exitCode === 0 || !(await pathExists(target.path))) {
-      return { ...target, status: "removed", method: "git worktree remove", exitCode: result.exitCode };
+    if (removeResult.exitCode === 0 || !(await pathExists(target.path))) {
+      return { ...target, status: "removed", method: "git worktree remove", exitCode: removeResult.exitCode };
     }
     if (input.fallbackRemove === false) {
-      return { ...target, status: "failed", method: "git worktree remove", exitCode: result.exitCode, stderr: result.stderr };
+      return {
+        ...target,
+        status: "failed",
+        method: "git worktree remove",
+        exitCode: removeResult.exitCode,
+        stdout: removeResult.stdout,
+        stderr: removeResult.stderr,
+        reason: cleanupFailureReason(removeResult, target),
+      };
     }
   }
-  await fsp.rm(target.path, { recursive: true, force: true });
-  return { ...target, status: "removed", method: "fs.rm" };
+  try {
+    await fsp.rm(target.path, { recursive: true, force: true });
+    return {
+      ...target,
+      status: "removed",
+      method: removeResult ? "fs.rm fallback after git worktree remove failed" : "fs.rm",
+      gitWorktreeRemoveExitCode: removeResult?.exitCode,
+      gitWorktreeRemoveStderr: removeResult?.stderr,
+    };
+  } catch (error) {
+    return {
+      ...target,
+      status: "failed",
+      method: removeResult ? "fs.rm fallback after git worktree remove failed" : "fs.rm",
+      exitCode: removeResult?.exitCode,
+      stderr: removeResult?.stderr,
+      reason: removeResult
+        ? `${cleanupFailureReason(removeResult, target)}\nFallback removal failed: ${error.message}`
+        : `Failed to remove ${target.path} with fs.rm: ${error.message}`,
+    };
+  }
 }
 
 async function removeStateTarget(target) {
@@ -76,12 +128,16 @@ async function removeStateTarget(target) {
 }
 
 function summarizeCleanupResult(result) {
-  const lines = [`# Multitask Cleanup: ${result.runId}`, ""];
+  const lines = [`# Porchestrator Cleanup: ${result.runId}`, ""];
   if (result.dryRun) lines.push("Dry run only; no files were removed.", "");
   const all = [...(result.worktrees || []), ...(result.state || [])];
   if (!all.length) lines.push("No cleanup targets selected.");
   for (const entry of all) {
-    lines.push(`- ${entry.status || "planned"} ${entry.type} ${entry.id || ""} ${entry.path}${entry.reason ? ` — ${entry.reason}` : ""}`.trim());
+    const reason = entry.reason ? ` — ${String(entry.reason).split(/\r?\n/).join(" | ")}` : "";
+    lines.push(`- ${entry.status || "planned"} ${entry.type} ${entry.id || ""} ${entry.path}${reason}`.trim());
+  }
+  if (result.worktreePrune) {
+    lines.push(`- ${result.worktreePrune.status} git-worktree-prune${result.worktreePrune.stderr ? ` — ${result.worktreePrune.stderr.trim()}` : ""}`);
   }
   return lines.join("\n");
 }
@@ -113,11 +169,16 @@ async function cleanupMultitaskRun(input = {}, options = {}) {
     state.push(dryRun ? { ...target, status: "planned" } : await removeStateTarget(target));
   }
 
+  const worktreePrune = !dryRun && targets.worktrees.length > 0
+    ? await pruneWorktreeMetadata(repo.root, input)
+    : undefined;
+
   const result = {
     runId: manifest.runId,
     dryRun,
     worktrees,
     state,
+    worktreePrune,
   };
   result.summary = summarizeCleanupResult(result);
 
@@ -135,6 +196,7 @@ module.exports = {
   cleanupMultitaskRun,
   collectCleanupTargets,
   isPathInside,
+  pruneWorktreeMetadata,
   summarizeCleanupResult,
   validateCleanupTarget,
 };

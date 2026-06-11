@@ -15,6 +15,11 @@ const METHODS = Object.freeze({
   APPLY: "multitask.apply",
   CANCEL: "multitask.cancel",
   CLEANUP: "multitask.cleanup",
+  RESUME: "multitask.resume",
+  AGENTS: "multitask.agents",
+  DOCTOR: "multitask.doctor",
+  EXPORT: "multitask.export",
+  PRUNE: "multitask.prune",
   PING: "daemon.ping",
   SHUTDOWN: "daemon.shutdown",
 });

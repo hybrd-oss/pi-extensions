@@ -8,7 +8,7 @@ const {
   git,
   isDirty,
 } = require("../git.js");
-const { runStartupScripts, runValidationScripts } = require("../hooks.js");
+const { runStartupScripts, runValidationScripts, summarizeCommandResults } = require("../hooks.js");
 const { ensureDir, path, pathExists, slugify } = require("../utils.js");
 const { appendRunEvent, appendTaskEvent } = require("./events.js");
 const {
@@ -75,6 +75,78 @@ async function addExistingBranchWorktree(repoRoot, worktree, branch) {
   return git(repoRoot, ["worktree", "add", worktree, branch], { timeoutSeconds: 180 });
 }
 
+async function gitStatus(cwd) {
+  return git(cwd, ["status", "--porcelain", "--untracked-files=all"], { allowFailure: true });
+}
+
+async function currentBranch(cwd) {
+  const result = await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"], { allowFailure: true });
+  return result.exitCode === 0 ? result.stdout.trim() : undefined;
+}
+
+function actionableGitOutput(result) {
+  return [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim();
+}
+
+function createDirtyWorktreeError(label, worktree, result, recovery) {
+  const output = actionableGitOutput(result);
+  const error = new Error([
+    `${label} has uncommitted, untracked, or unresolved changes and Porchestrator refuses to continue by default.`,
+    `Worktree: ${worktree}`,
+    output ? `Git status:\n${output}` : undefined,
+    recovery || "Commit, stash, discard, or resolve those changes before retrying.",
+  ].filter(Boolean).join("\n"));
+  error.status = result?.stdout;
+  error.stderr = result?.stderr;
+  return error;
+}
+
+async function requireCleanWorktree(cwd, label, recovery) {
+  const status = await gitStatus(cwd);
+  if (status.exitCode !== 0 || status.stdout.trim()) {
+    throw createDirtyWorktreeError(label, cwd, status, recovery);
+  }
+}
+
+function hasUnmergedStatusLine(line) {
+  const status = String(line || "").slice(0, 2);
+  return status.includes("U") || ["AA", "DD"].includes(status);
+}
+
+async function requireNoUnmergedWorktree(cwd, label, recovery) {
+  const status = await gitStatus(cwd);
+  const unmerged = status.stdout.split(/\r?\n/).filter(hasUnmergedStatusLine);
+  if (status.exitCode !== 0 || unmerged.length) {
+    throw createDirtyWorktreeError(label, cwd, { ...status, stdout: unmerged.join("\n") || status.stdout }, recovery);
+  }
+}
+
+async function ensureIntegrationWorktreeOnBranch(integration) {
+  const branch = await currentBranch(integration.worktree);
+  if (branch && integration.branch && branch === integration.branch) return;
+  if (!integration.branch && branch) return;
+  const error = new Error([
+    branch ? "Integration worktree is not checked out on the manifest integration branch." : "Integration worktree is not a readable git checkout.",
+    `Worktree: ${integration.worktree}`,
+    `Expected branch: ${integration.branch}`,
+    `Actual branch: ${branch}`,
+    "Switch the worktree back to the integration branch or clean up/recreate the run worktrees before merging.",
+  ].join("\n"));
+  error.expectedBranch = integration.branch;
+  error.actualBranch = branch;
+  throw error;
+}
+
+function formatMergeFailureMessage(task, integration, result, status) {
+  const output = actionableGitOutput(result);
+  return [
+    `Merging task ${task.id} (${task.branch}) into integration branch ${integration.branch} failed with status ${status}.`,
+    `Integration worktree: ${integration.worktree}`,
+    output ? `Git output:\n${output}` : undefined,
+    "Resolve conflicts in the integration worktree, commit the resolution on the integration branch, then retry multitask_merge or mark the task for changes.",
+  ].filter(Boolean).join("\n");
+}
+
 async function ensureIntegrationWorktree(repoRoot, config, manifest, input = {}) {
   const integration = ensureIntegrationRecord(manifest, config);
   const scripts = resolveIntegrationScriptsForMerge(config, manifest, input);
@@ -82,6 +154,7 @@ async function ensureIntegrationWorktree(repoRoot, config, manifest, input = {})
   integration.validationScripts = scriptIds(scripts.validation);
 
   if (integration.worktree && await pathExists(integration.worktree)) {
+    await ensureIntegrationWorktreeOnBranch(integration);
     return { integration, scripts, created: false };
   }
 
@@ -97,6 +170,8 @@ async function ensureIntegrationWorktree(repoRoot, config, manifest, input = {})
   } else {
     await createWorktree(repoRoot, integration.worktree, integration.branch, baseRef, input.worktreeOptions || {});
   }
+
+  await ensureIntegrationWorktreeOnBranch(integration);
 
   integration.status = "setup";
   integration.startupResults = await runStartupScripts(config, integration.worktree, "integration", {
@@ -117,9 +192,11 @@ async function ensureIntegrationWorktree(repoRoot, config, manifest, input = {})
 async function ensureTaskBranchReady(repoRoot, manifest, task) {
   if (!task.branch) throw new Error(`Task ${task.id} has no branch to merge.`);
   if (task.worktree && await pathExists(task.worktree)) {
-    const result = await addAndCommit(task.worktree, ["-A"], `multitask: complete ${manifest.runId}/${task.id}`);
+    await requireNoUnmergedWorktree(task.worktree, `Task worktree ${task.id}`, "Resolve any in-progress merge/rebase in the worker worktree before merging it into integration.");
+    const result = await addAndCommit(task.worktree, ["-A"], `multitask: checkpoint ${manifest.runId}/${task.id} before integration merge`);
     task.commit = result.commit;
     task.lastMergePreparation = {
+      checkpoint: true,
       committed: result.committed,
       commit: result.commit,
       completedAt: new Date().toISOString(),
@@ -144,17 +221,22 @@ function validationFailed(results) {
 }
 
 function summarizeMergeResult(runId, merges, integration) {
-  const lines = [`# Multitask Merge: ${runId}`, ""];
+  const lines = [`# Porchestrator Merge: ${runId}`, ""];
   if (!merges.length) lines.push("No ready tasks were selected for merge.");
   for (const merge of merges) {
     lines.push(`- ${merge.taskId}: ${merge.status}${merge.commit ? ` @ ${String(merge.commit).slice(0, 12)}` : ""}`);
-    if (merge.stderr && merge.status !== "merged") lines.push(`  stderr: ${merge.stderr.trim()}`);
+    if (merge.message && merge.status !== "merged") lines.push(`  ${merge.message.split(/\r?\n/).join("\n  ")}`);
+    else if (merge.stderr && merge.status !== "merged") lines.push(`  stderr: ${merge.stderr.trim()}`);
   }
   if (integration) {
     lines.push("", `Integration: ${integration.status}`);
     if (integration.branch) lines.push(`Branch: ${integration.branch}`);
     if (integration.worktree) lines.push(`Worktree: ${integration.worktree}`);
     if (integration.commit) lines.push(`Commit: ${integration.commit}`);
+    if (Array.isArray(integration.validation)) {
+      lines.push("", "Integration validation:", summarizeCommandResults(integration.validation));
+    }
+    if (integration.validationError) lines.push("", `Validation error: ${integration.validationError}`);
   }
   return lines.join("\n");
 }
@@ -177,6 +259,13 @@ async function mergeTasks(input = {}, options = {}) {
   }
 
   const { integration, scripts } = await ensureIntegrationWorktree(repo.root, config, manifest, input);
+  if (input.requireCleanIntegration !== false) {
+    await requireCleanWorktree(
+      integration.worktree,
+      "Integration worktree",
+      "Resolve, commit, stash, or discard integration worktree changes before merging task branches. Pass requireCleanIntegration:false only after inspecting the worktree manually.",
+    );
+  }
 
   manifest.status = "merging";
   integration.status = "merging";
@@ -194,14 +283,16 @@ async function mergeTasks(input = {}, options = {}) {
 
     await ensureTaskBranchReady(repo.root, manifest, task);
     const result = await mergeBranchIntoIntegration(integration, task);
+    const status = result.exitCode === 0 ? "merged" : "conflict";
     const entry = {
       taskId: task.id,
       branch: task.branch,
       commit: task.commit,
-      status: result.exitCode === 0 ? "merged" : "conflict",
+      status,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      message: result.exitCode === 0 ? undefined : formatMergeFailureMessage(task, integration, result, status),
       completedAt: new Date().toISOString(),
     };
     integration.merges.push(entry);
@@ -222,6 +313,7 @@ async function mergeTasks(input = {}, options = {}) {
     await appendTaskEvent(repo.root, manifest.runId, task.id, "task_merged_to_integration", entry);
   }
 
+  delete integration.validationError;
   integration.validation = await runValidationScripts(config, integration.worktree, "integration", {
     runId: manifest.runId,
     runDir: runDir(repo.root, manifest.runId),
@@ -229,6 +321,17 @@ async function mergeTasks(input = {}, options = {}) {
   }, scripts.validation).catch((error) => {
     integration.validationError = error.message;
     return error.results || [error.commandResult].filter(Boolean);
+  });
+
+  await appendRunEvent(repo.root, manifest.runId, "integration_validation_completed", {
+    status: validationFailed(integration.validation) ? "failed" : "succeeded",
+    results: (integration.validation || []).map((result) => ({
+      id: result.id,
+      name: result.name,
+      status: result.status,
+      required: result.required,
+      exitCode: result.exitCode,
+    })),
   });
 
   integration.commit = await getCurrentCommit(integration.worktree).catch(() => undefined);
@@ -247,20 +350,66 @@ async function mergeTasks(input = {}, options = {}) {
 
 async function requireCleanForegroundCheckout(repoRoot) {
   if (!(await isDirty(repoRoot))) return;
-  const status = await git(repoRoot, ["status", "--porcelain", "--untracked-files=all"], { allowFailure: true });
+  const status = await gitStatus(repoRoot);
   const error = new Error([
-    "Foreground checkout has uncommitted or untracked changes. Commit, stash, or pass requireClean:false before multitask_apply.",
-    status.stdout.trim(),
+    "Foreground checkout has uncommitted or untracked changes. multitask_apply refuses unsafe foreground checkouts by default.",
+    `Checkout: ${repoRoot}`,
+    status.stdout.trim() ? `Git status:\n${status.stdout.trim()}` : undefined,
+    "Commit, stash, or discard foreground changes before applying integration results. Pass requireClean:false only after explicit user approval and manual inspection.",
   ].filter(Boolean).join("\n"));
   error.status = status.stdout;
   throw error;
 }
 
+function approvalToken(runId) {
+  return `apply ${runId}`;
+}
+
+function requireApplyApproval(input, manifest, options = {}) {
+  if (options.requireApproval === false || input.requireApproval === false) return;
+  if (input.approved === true || input.confirm === approvalToken(manifest.runId)) return;
+  const error = new Error([
+    "multitask_apply requires explicit user approval before merging integration results into the foreground checkout.",
+    `Run: ${manifest.runId}`,
+    `Required confirmation token: ${approvalToken(manifest.runId)}`,
+    "Pass approved:true only after the user has approved this apply operation, or pass the confirmation token for non-interactive automation.",
+  ].join("\n"));
+  error.code = "PI_MULTITASK_APPLY_APPROVAL_REQUIRED";
+  error.requiredConfirmation = approvalToken(manifest.runId);
+  throw error;
+}
+
+function requireIntegrationReadyForApply(integration, input = {}) {
+  if (input.requireReady === false) return;
+  if (integration.status === "ready") return;
+  const error = new Error([
+    "Integration is not ready to apply. multitask_apply requires successful integration merge and validation by default.",
+    `Current integration status: ${integration.status || "unknown"}`,
+    integration.validationError ? `Validation error: ${integration.validationError}` : undefined,
+    Array.isArray(integration.validation) ? `Integration validation:\n${summarizeCommandResults(integration.validation)}` : undefined,
+    "Run multitask_merge, resolve conflicts, and ensure required integration validation scripts succeed before applying. Pass requireReady:false only after explicit manual inspection.",
+  ].filter(Boolean).join("\n"));
+  error.code = "PI_MULTITASK_INTEGRATION_NOT_READY";
+  error.integrationStatus = integration.status;
+  throw error;
+}
+
+function formatApplyFailureMessage(manifest, integration, result) {
+  const output = actionableGitOutput(result);
+  return [
+    `Applying integration branch ${integration.branch} for run ${manifest.runId} failed with a merge conflict or git error.`,
+    `Foreground checkout: ${manifest.repoRoot || "current repository"}`,
+    output ? `Git output:\n${output}` : undefined,
+    "Resolve the foreground checkout conflict, commit or abort the merge, then rerun multitask_apply after explicit approval.",
+  ].filter(Boolean).join("\n");
+}
+
 function summarizeApplyResult(runId, apply) {
-  const lines = [`# Multitask Apply: ${runId}`, "", `Status: ${apply.status}`];
+  const lines = [`# Porchestrator Apply: ${runId}`, "", `Status: ${apply.status}`];
   if (apply.branch) lines.push(`Branch: ${apply.branch}`);
   if (apply.commit) lines.push(`Commit: ${apply.commit}`);
-  if (apply.stderr && apply.status !== "applied") lines.push("", apply.stderr.trim());
+  if (apply.message && apply.status !== "applied") lines.push("", apply.message);
+  else if (apply.stderr && apply.status !== "applied") lines.push("", apply.stderr.trim());
   return lines.join("\n");
 }
 
@@ -268,8 +417,11 @@ async function applyIntegration(input = {}, options = {}) {
   if (!input.runId) throw new Error("runId is required for multitask apply.");
   const repo = options.repo || await getRepoInfo(options.cwd || process.cwd());
   const manifest = options.manifest || await loadManifest(repo.root, slugify(input.runId, "run"));
+  manifest.repoRoot = manifest.repoRoot || repo.root;
   const integration = manifest.integration;
   if (!integration?.branch) throw new Error(`Run ${manifest.runId} has no integration branch to apply.`);
+  requireApplyApproval(input, manifest, options);
+  requireIntegrationReadyForApply(integration, input);
   if (!(await branchExists(repo.root, integration.branch))) throw new Error(`Integration branch does not exist: ${integration.branch}`);
   if (input.requireClean !== false) await requireCleanForegroundCheckout(repo.root);
 
@@ -283,6 +435,7 @@ async function applyIntegration(input = {}, options = {}) {
     exitCode: result.exitCode,
     stdout: result.stdout,
     stderr: result.stderr,
+    message: result.exitCode === 0 ? undefined : formatApplyFailureMessage(manifest, integration, result),
     completedAt: new Date().toISOString(),
   };
 
@@ -314,6 +467,7 @@ module.exports = {
   ensureIntegrationRecord,
   ensureIntegrationWorktree,
   mergeTasks,
+  requireApplyApproval,
   requireCleanForegroundCheckout,
   resolveIntegrationScriptsForMerge,
   summarizeApplyResult,

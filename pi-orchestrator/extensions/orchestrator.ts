@@ -5,6 +5,7 @@ const orchestrator = require("../src/index.js");
 
 const multitask = orchestrator.multitask || require("../src/multitask/index.js");
 const multitaskTui = multitask.tuiState || require("../src/multitask/tui-state.js");
+const multitaskDashboard = multitask.dashboardServer || require("../src/multitask/dashboard-server.js");
 
 const multitaskWidgetKey = "pi-multitask";
 let multitaskWidgetTimer;
@@ -29,6 +30,7 @@ const MultitaskTaskSchema = Type.Object({
   model: Type.Optional(Type.String({ description: "Optional model override for this worker" })),
   startupScripts: Type.Optional(ScriptIdsSchema),
   validationScripts: Type.Optional(ScriptIdsSchema),
+  dependencies: Type.Optional(Type.Array(Type.String({ description: "Task ids that must finish before this task starts" }))),
 });
 
 const IntegrationScriptsSchema = Type.Object({
@@ -37,6 +39,13 @@ const IntegrationScriptsSchema = Type.Object({
 });
 
 const MessageModeSchema = Type.Union([Type.Literal("steer"), Type.Literal("followUp")]);
+const MessageTypeSchema = Type.Union([
+  Type.Literal("assignment"),
+  Type.Literal("question"),
+  Type.Literal("inform"),
+  Type.Literal("review_feedback"),
+  Type.Literal("decision"),
+]);
 
 function textResult(text, details = {}) {
   return { content: [{ type: "text", text }], details };
@@ -50,14 +59,14 @@ function isFuturePhaseError(error) {
 function futurePhaseResult(operation, error) {
   const message = String(error?.message || error || `${operation} is not implemented yet.`);
   return textResult(
-    `${operation} is reserved for a later Pi Multitask phase.\n\n${message}`,
+    `${operation} is reserved for a later Porchestrator phase.\n\n${message}`,
     { placeholder: true, operation, message },
   );
 }
 
 function errorResult(error) {
   const message = error && error.stack ? error.stack : String(error && error.message ? error.message : error);
-  return { content: [{ type: "text", text: `Multitask error:\n${message}` }], isError: true, details: { error: message } };
+  return { content: [{ type: "text", text: `Porchestrator error:\n${message}` }], isError: true, details: { error: message } };
 }
 
 function compactMultitaskManifest(manifest) {
@@ -111,7 +120,7 @@ function formatRunStatus(manifest) {
 function formatStartResult(result) {
   const manifest = result.manifest;
   const lines = [
-    `# Pi Multitask ${manifest.runId}`,
+    `# Porchestrator ${manifest.runId}`,
     "",
     `Status: ${manifest.status}`,
     `Plan: ${result.planPath}`,
@@ -233,6 +242,50 @@ async function notifyMultitaskCommand(ctx, operation, fn) {
   ctx.ui.notify(text, result.isError ? "warning" : "info");
 }
 
+function parseDashboardArgs(args) {
+  const parts = parseTaskIds(args || "");
+  const open = parts.includes("--open");
+  const cleaned = parts.filter((part) => part !== "--open");
+  return { commandOrRunId: cleaned[0], open };
+}
+
+function dashboardOutput(url, reused = false) {
+  return [
+    `Porchestrator dashboard ${reused ? "reused" : "running"}:`,
+    url,
+    "",
+    "Bound to localhost only. Keep this URL private.",
+  ].join("\n");
+}
+
+async function handleMultitaskDashboardCommand(args, ctx) {
+  const { commandOrRunId, open } = parseDashboardArgs(args);
+  try {
+    const repo = await orchestrator.getRepoInfo(ctx.cwd);
+    if (commandOrRunId === "stop") {
+      const result = await multitaskDashboard.stopDashboardServer({ cwd: ctx.cwd, repoRoot: repo.root });
+      return ctx.ui.notify(result.stopped ? "Stopped Porchestrator dashboard." : "Porchestrator dashboard is not running for this repo.", "info");
+    }
+    if (commandOrRunId === "status") {
+      const status = await multitaskDashboard.getDashboardServerStatus({ cwd: ctx.cwd, repoRoot: repo.root });
+      return ctx.ui.notify(status.running ? dashboardOutput(status.redactedUrl, true) : "Porchestrator dashboard is not running for this repo.", "info");
+    }
+
+    await ensureMultitaskClient(ctx.cwd);
+    let defaultRunId = commandOrRunId;
+    if (!defaultRunId) {
+      const client = multitask.client.createClient({ cwd: ctx.cwd, repoRoot: repo.root });
+      const status = await client.status({}).catch(() => undefined);
+      defaultRunId = status?.activeRunId || status?.runs?.find((run) => !["merged", "failed", "aborted"].includes(run.status))?.runId || status?.runs?.[0]?.runId;
+    }
+    const result = await multitaskDashboard.startDashboardServer({ cwd: ctx.cwd, repoRoot: repo.root, defaultRunId });
+    if (open) multitaskDashboard.openDashboardUrl(result.url);
+    ctx.ui.notify(dashboardOutput(result.url, result.reused), "info");
+  } catch (error) {
+    ctx.ui.notify(`Unable to start Porchestrator dashboard: ${error.message || error}`, "warning");
+  }
+}
+
 function configPathFor(cwd) {
   return path.join(cwd, ".pi", "multitask", "config.json");
 }
@@ -305,7 +358,7 @@ async function chooseScriptIds(ctx, config, title, current = []) {
 async function handleMultitaskConfigCommand(args, ctx) {
   const actionArg = args?.trim();
   const action = actionArg || (ctx.hasUI
-    ? await ctx.ui.select("Multitask named-script config", ["show", "validate", "init", "add-script", "set-defaults"])
+    ? await ctx.ui.select("Porchestrator named-script config", ["show", "validate", "init", "add-script", "set-defaults"])
     : "show");
   if (!action) return;
 
@@ -380,7 +433,7 @@ async function handleMultitaskConfigCommand(args, ctx) {
 
 function multitaskRequestText(args) {
   return [
-    "Use Pi Multitask mode for this request.",
+    "Use Porchestrator mode for this request.",
     "Inspect relevant files/specs first, then propose independent local-worktree workers and explicit named startupScripts/validationScripts selections from .pi/multitask/config.json (do not auto-detect scripts).",
     "Ask for approval before calling multitask_start. After starting, keep helping while workers run and use multitask_status/diff/message to monitor or steer. Review and merge/apply only after user approval.",
     `Request: ${args?.trim() || "(no request provided)"}`,
@@ -420,6 +473,16 @@ function matchesPanelKey(data, keyName) {
   return matchesKey(data, key);
 }
 
+const panelViewLabels = {
+  board: "task board",
+  runs: "runs",
+  detail: "task detail",
+  transcript: "transcript tail",
+  diff: "diff summary",
+  review: "review results",
+  integration: "integration",
+};
+
 class MultitaskPanelComponent {
   constructor(state, options = {}) {
     this.state = state;
@@ -427,8 +490,8 @@ class MultitaskPanelComponent {
     this.done = options.done || (() => {});
     this.requestRender = options.requestRender || (() => {});
     this.items = buildPanelItems(state);
-    this.selectedIndex = 0;
-    this.detail = false;
+    this.selectedIndex = Math.max(0, Math.min(options.selectedIndex || 0, Math.max(0, this.items.length - 1)));
+    this.view = options.view || "board";
     this.closed = false;
   }
 
@@ -438,21 +501,38 @@ class MultitaskPanelComponent {
     return this.items[this.selectedIndex];
   }
 
+  selectedRun() {
+    return this.selected()?.run || this.state.runs?.find((run) => run.runId === this.state.activeRunId) || this.state.runs?.[0];
+  }
+
+  selectedKey() {
+    const selected = this.selected();
+    return selected ? selected.key : undefined;
+  }
+
   move(delta) {
     if (!this.items.length) return;
     this.selectedIndex = Math.max(0, Math.min(this.items.length - 1, this.selectedIndex + delta));
-    this.detail = false;
     this.requestRender();
   }
 
-  finish(action) {
+  setView(view) {
+    this.view = view;
+    this.requestRender();
+  }
+
+  finish(action, extra = {}) {
     if (this.closed) return;
     this.closed = true;
     const selected = this.selected();
+    const run = selected?.run || this.selectedRun();
     this.done({
       action,
-      runId: selected?.run?.runId,
+      runId: run?.runId,
       taskId: selected?.task?.id,
+      selectedIndex: this.selectedIndex,
+      view: this.view,
+      ...extra,
     });
   }
 
@@ -460,74 +540,76 @@ class MultitaskPanelComponent {
     if (matchesPanelKey(data, "up")) return this.move(-1);
     if (matchesPanelKey(data, "down")) return this.move(1);
     if (matchesPanelKey(data, "escape")) {
-      if (this.detail) {
-        this.detail = false;
-        this.requestRender();
+      if (this.view !== "board") {
+        this.setView("board");
         return;
       }
       return this.finish("close");
     }
-    if (matchesPanelKey(data, "enter") || data === "i") {
-      if (this.items.length) {
-        this.detail = !this.detail;
-        this.requestRender();
-      }
-      return;
-    }
+    if (matchesPanelKey(data, "enter") || data === "i") return this.setView("detail");
     if (data === "q") return this.finish("close");
-    if (data === "m") return this.finish("message");
-    if (data === "d") return this.finish("diff");
-    if (data === "r") return this.finish("review");
+    if (data === "b") return this.setView("board");
+    if (data === "l") return this.setView("runs");
+    if (data === "t") return this.setView("transcript");
+    if (data === "d") return this.setView("diff");
+    if (data === "v") return this.setView("review");
+    if (data === "g") return this.setView("integration");
+    if (data === "u") return this.finish("refresh");
+    if (data === "m") return this.finish("message", { mode: "followUp" });
+    if (data === "s") return this.finish("message", { mode: "steer" });
     if (data === "x") return this.finish("cancel");
+    if (data === "e") return this.finish("resume");
+    if (data === "R") return this.finish("review");
+    if (data === "D") return this.finish("diff");
+    if (data === "M") return this.finish("mergeSelected");
+    if (data === "a") return this.finish("applyIntegration");
+    if (data === "c") return this.finish("cleanup");
+  }
+
+  renderViewLines() {
+    const selected = this.selected();
+    const run = selected?.run || this.selectedRun();
+    if (this.view === "runs") {
+      return multitaskTui.formatRunsListLines(this.state, { selectedRunId: run?.runId });
+    }
+    if (!selected && !run) return ["No Porchestrator runs found."];
+    if (!selected && !["runs", "integration"].includes(this.view)) return ["No multitask tasks found for this run."];
+    if (this.view === "detail") return multitaskTui.formatTaskDetail(selected.task, selected.run);
+    if (this.view === "transcript") return multitaskTui.formatTranscriptTailLines(selected.task, { maxEntries: 20, maxWidth: 140 });
+    if (this.view === "diff") return multitaskTui.formatDiffSummaryLines(selected.task, { maxFiles: 20 });
+    if (this.view === "review") return multitaskTui.formatReviewResultsLines(selected.task, { maxChecks: 12 });
+    if (this.view === "integration") return multitaskTui.formatIntegrationStatusLines(run);
+    return multitaskTui.formatTaskBoardLines(this.state, { selectedKey: this.selectedKey(), maxRuns: 4, maxTasksPerGroup: 8 });
   }
 
   render(width) {
     const renderWidth = Math.max(20, width || 80);
-    const title = this.theme?.fg ? this.theme.fg("accent", this.theme.bold ? this.theme.bold("Pi Multitask") : "Pi Multitask") : "Pi Multitask";
-    const footer = this.theme?.fg
-      ? this.theme.fg("dim", "enter inspect · m message · d diff · r review · x cancel · q close")
-      : "enter inspect · m message · d diff · r review · x cancel · q close";
-
-    if (!this.items.length) {
-      return [title, "", "No multitask runs found.", "", footer].map((line) => truncatePanelLine(line, renderWidth));
-    }
-
-    const selected = this.selected();
-    if (this.detail && selected) {
-      const detailLines = [title, "", ...multitaskTui.formatTaskDetail(selected.task, selected.run), "", footer];
-      return detailLines.map((line) => truncatePanelLine(line, renderWidth));
-    }
-
-    const maxCards = 12;
-    const start = Math.max(0, Math.min(this.selectedIndex - Math.floor(maxCards / 2), Math.max(0, this.items.length - maxCards)));
-    const visibleItems = this.items.slice(start, start + maxCards);
-    const lines = [title, ""];
-    if (start > 0) lines.push(`  ↑ ${start} more`);
-    let lastRunId;
-    for (const item of visibleItems) {
-      if (item.run.runId !== lastRunId) {
-        lines.push(`Run: ${item.run.displayName}                         status: ${item.run.statusLabel}`);
-        lastRunId = item.run.runId;
-      }
-      lines.push(multitaskTui.formatTaskCard(item.task, { selected: item.key === selected?.key }));
-    }
-    const hiddenAfter = this.items.length - (start + visibleItems.length);
-    if (hiddenAfter > 0) lines.push(`  ↓ ${hiddenAfter} more`);
-    lines.push("", footer);
+    const rawTitle = `Porchestrator — ${panelViewLabels[this.view] || this.view}`;
+    const title = this.theme?.fg ? this.theme.fg("accent", this.theme.bold ? this.theme.bold(rawTitle) : rawTitle) : rawTitle;
+    const footerText = "↑↓ select · b board · l runs · i detail · t tail · d diff · v review · g integration · u refresh · m/s message/steer · x abort · R review · M merge · a apply · c cleanup · q close";
+    const footer = this.theme?.fg ? this.theme.fg("dim", footerText) : footerText;
+    const generated = this.state.generatedAt ? `status refreshed ${this.state.generatedAt}` : "";
+    const lines = [title];
+    if (generated) lines.push(this.theme?.fg ? this.theme.fg("dim", generated) : generated);
+    lines.push("", ...this.renderViewLines(), "", footer);
     return lines.map((line) => truncatePanelLine(line, renderWidth));
   }
 }
 
 async function handleMultitaskPanelAction(action, ctx) {
-  if (!action || action.action === "close") return;
+  if (!action || action.action === "close" || action.action === "refresh") return;
   const { runId, taskId } = action;
-  if (!runId || !taskId) return ctx.ui.notify("Select a multitask task first.", "warning");
+  if (!runId) return ctx.ui.notify("Select a multitask run first.", "warning");
+  const taskAction = !["applyIntegration", "cleanup"].includes(action.action);
+  if (taskAction && !taskId) return ctx.ui.notify("Select a multitask task first.", "warning");
 
   if (action.action === "message") {
-    const message = ctx.hasUI ? await ctx.ui.input(`Message for ${runId}/${taskId}`) : undefined;
+    const mode = action.mode === "steer" ? "steer" : "followUp";
+    const label = mode === "steer" ? "Steer" : "Message";
+    const message = ctx.hasUI ? await ctx.ui.input(`${label} for ${runId}/${taskId}`) : undefined;
     if (!message) return;
     await notifyMultitaskCommand(ctx, "multitask_message", async (client) => {
-      const result = await client.message({ runId, taskId, message });
+      const result = await client.message({ runId, taskId, message, mode });
       return textResult(`Sent ${result.command} to ${runId}/${taskId}.`, result);
     });
     return;
@@ -549,9 +631,53 @@ async function handleMultitaskPanelAction(action, ctx) {
     return;
   }
 
+  if (action.action === "mergeSelected") {
+    if (ctx.hasUI) {
+      const ok = await ctx.ui.confirm("Merge multitask task?", `Merge ${runId}/${taskId} into the integration worktree?`);
+      if (!ok) return;
+    }
+    await notifyMultitaskCommand(ctx, "multitask_merge", async (client) => {
+      const result = await client.merge({ runId, taskIds: [taskId] });
+      return textResult(formatCommandResult(result, "Merge complete."), result);
+    });
+    return;
+  }
+
+  if (action.action === "applyIntegration") {
+    if (ctx.hasUI) {
+      const ok = await ctx.ui.confirm("Apply multitask integration?", `Apply run ${runId} to the current checkout?`);
+      if (!ok) return;
+    }
+    await notifyMultitaskCommand(ctx, "multitask_apply", async (client) => {
+      const result = await client.apply({ runId, approved: true });
+      return textResult(formatCommandResult(result, "Apply complete."), result);
+    });
+    return;
+  }
+
+  if (action.action === "cleanup") {
+    if (ctx.hasUI) {
+      const ok = await ctx.ui.confirm("Clean up multitask run?", `Remove worktrees for ${runId}? Use /mt-cleanup ${runId} --dry-run to preview first.`);
+      if (!ok) return;
+    }
+    await notifyMultitaskCommand(ctx, "multitask_cleanup", async (client) => {
+      const result = await client.cleanup({ runId, removeState: false, dryRun: false });
+      return textResult(formatCommandResult(result, "Cleanup complete."), result);
+    });
+    return;
+  }
+
+  if (action.action === "resume") {
+    await notifyMultitaskCommand(ctx, "multitask_resume", async (client) => {
+      const result = await client.resume({ runId, taskId });
+      return textResult(formatCommandResult(result, "Resume complete."), result);
+    });
+    return;
+  }
+
   if (action.action === "cancel") {
     if (ctx.hasUI) {
-      const ok = await ctx.ui.confirm("Cancel multitask worker?", `Cancel ${runId}/${taskId}?`);
+      const ok = await ctx.ui.confirm("Abort multitask worker?", `Interrupt/abort ${runId}/${taskId}?`);
       if (!ok) return;
     }
     await notifyMultitaskCommand(ctx, "multitask_cancel", async (client) => {
@@ -562,35 +688,39 @@ async function handleMultitaskPanelAction(action, ctx) {
 }
 
 async function openMultitaskPanel(ctx) {
-  let state;
-  try {
-    state = await loadMultitaskTuiStateForCwd(ctx.cwd, { eventLimit: 5 });
-  } catch (error) {
-    return ctx.ui.notify(`Unable to load multitask panel: ${error.message || error}`, "warning");
-  }
+  let selectedIndex = 0;
+  let view = "board";
+  for (;;) {
+    let state;
+    try {
+      state = await loadMultitaskTuiStateForCwd(ctx.cwd, { eventLimit: 5, transcriptLimit: 20 });
+    } catch (error) {
+      return ctx.ui.notify(`Unable to load multitask panel: ${error.message || error}`, "warning");
+    }
 
-  if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
-    ctx.ui.notify(multitaskTui.formatActiveRuns(state, { includeInactive: true }), "info");
+    if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+      ctx.ui.notify(multitaskTui.formatActiveRuns(state, { includeInactive: true }), "info");
+      return;
+    }
+
+    const action = await ctx.ui.custom((tui, theme, _keybindings, done) => new MultitaskPanelComponent(state, {
+      theme,
+      done,
+      selectedIndex,
+      view,
+      requestRender: () => tui.requestRender(),
+    }));
+    selectedIndex = action?.selectedIndex ?? selectedIndex;
+    view = action?.view || view;
+    if (action?.action === "refresh") continue;
+    await handleMultitaskPanelAction(action, ctx);
+    await refreshMultitaskWidget(ctx).catch(() => {});
     return;
   }
-
-  const action = await ctx.ui.custom((tui, theme, _keybindings, done) => new MultitaskPanelComponent(state, {
-    theme,
-    done,
-    requestRender: () => tui.requestRender(),
-  }));
-  await handleMultitaskPanelAction(action, ctx);
-  await refreshMultitaskWidget(ctx).catch(() => {});
 }
 
 export default function piOrchestratorExtension(pi) {
   if (process.env.PI_MULTITASK_ROLE === "worker") return;
-
-  const packageRoot = path.resolve(__dirname, "..");
-
-  pi.on("resources_discover", async () => ({
-    promptPaths: [path.join(packageRoot, "prompts")],
-  }));
 
   pi.on("session_start", async (_event, ctx) => {
     startMultitaskWidgetRefresh(ctx);
@@ -598,14 +728,15 @@ export default function piOrchestratorExtension(pi) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     stopMultitaskWidgetRefresh(ctx);
+    await multitaskDashboard.stopAllDashboardServers().catch(() => {});
   });
 
   pi.on("before_agent_start", async (event) => ({
     systemPrompt:
       event.systemPrompt +
-      "\n\n# Pi Multitask\n" +
+      "\n\n# Porchestrator\n" +
       "When the user asks to multitask, parallelize, use workers, delegate, use background agents, split work across worktrees, or mentions /multitask or /mt, use the multitask tools. " +
-      "Pi Multitask runs persistent local Pi RPC worker sessions in isolated git worktrees while the main chat remains usable. " +
+      "Porchestrator runs persistent local Pi RPC worker sessions in isolated git worktrees while the main chat remains usable. " +
       "Preferred flow: inspect relevant files/specs; decompose into independent local-worktree tasks; tell the user the proposed workers and explicit named startupScripts/validationScripts selections from .pi/multitask/config.json; ask for approval; call multitask_start; continue helping while workers run; use multitask_status, multitask_diff, and multitask_message to monitor and steer workers; review before merge; merge/apply only after user approval. " +
       "Do not auto-detect startup or validation scripts. Choose named scripts explicitly and show the effective selections to the user. " +
       "Use multitask_message for worker follow-ups. Do not use multitask tools from worker processes.\n",
@@ -613,8 +744,8 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_start",
-    label: "Multitask Start",
-    description: "Create a Pi Multitask run, create local worktrees, start persistent worker sessions, and return immediately.",
+    label: "Porchestrator Start",
+    description: "Create a Porchestrator run, create local worktrees, start persistent worker sessions, and return immediately.",
     promptSnippet: "Start local background worker sessions in isolated git worktrees",
     promptGuidelines: [
       "Use multitask_start only after the user has approved the worker decomposition.",
@@ -631,7 +762,7 @@ export default function piOrchestratorExtension(pi) {
       tasks: Type.Array(MultitaskTaskSchema, { description: "Worker tasks" }),
     }),
     async execute(_id, params, _signal, onUpdate, ctx) {
-      onUpdate?.({ content: [{ type: "text", text: "Starting Pi Multitask run..." }] });
+      onUpdate?.({ content: [{ type: "text", text: "Starting Porchestrator run..." }] });
       return executeMultitask(ctx, "multitask_start", async (client) => {
         const result = await client.start(params);
         return textResult(formatStartResult(result), {
@@ -645,16 +776,20 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_spawn",
-    label: "Multitask Spawn",
-    description: "Add a worker to an existing Pi Multitask run.",
+    label: "Porchestrator Spawn",
+    description: "Add a worker to an existing Porchestrator run.",
     promptSnippet: "Add a worker to an existing multitask run",
     parameters: Type.Object({
       runId: Type.String({ description: "Run id" }),
       id: Type.String({ description: "New worker task id" }),
+      title: Type.Optional(Type.String({ description: "Optional human-friendly task title" })),
       prompt: Type.String({ description: "Worker prompt/instructions" }),
+      agent: Type.Optional(Type.String({ description: "Worker agent prompt to use. Default: worker" })),
+      model: Type.Optional(Type.String({ description: "Optional model override for this worker" })),
       baseRef: Type.Optional(Type.String({ description: "Optional base ref for the new worker" })),
       startupScripts: Type.Optional(ScriptIdsSchema),
       validationScripts: Type.Optional(ScriptIdsSchema),
+      dependencies: Type.Optional(Type.Array(Type.String({ description: "Task ids that must finish before this task starts" }))),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       return executeMultitask(ctx, "multitask_spawn", async (client) => {
@@ -666,7 +801,7 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_message",
-    label: "Multitask Message",
+    label: "Porchestrator Message",
     description: "Send a steer/follow-up/prompt message to a persistent multitask worker session.",
     promptSnippet: "Send follow-up instructions to a multitask worker",
     parameters: Type.Object({
@@ -674,6 +809,10 @@ export default function piOrchestratorExtension(pi) {
       taskId: Type.String({ description: "Worker task id" }),
       message: Type.String({ description: "Message to send to the worker" }),
       mode: Type.Optional(MessageModeSchema),
+      type: Type.Optional(MessageTypeSchema),
+      correlationId: Type.Optional(Type.String({ description: "Optional typed-message correlation id" })),
+      payload: Type.Optional(Type.Any({ description: "Optional typed-message payload" })),
+      restartIfNeeded: Type.Optional(Type.Boolean({ description: "Restart a detached worker from its session directory before sending" })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       return executeMultitask(ctx, "multitask_message", async (client) => {
@@ -684,9 +823,31 @@ export default function piOrchestratorExtension(pi) {
   });
 
   pi.registerTool({
+    name: "multitask_resume",
+    label: "Porchestrator Resume",
+    description: "Restart or resume a detached multitask worker from its persisted session directory.",
+    promptSnippet: "Resume detached multitask worker sessions",
+    parameters: Type.Object({
+      runId: Type.String({ description: "Run id" }),
+      taskId: Type.Optional(Type.String({ description: "Optional worker task id. Omit to resume all restartable detached workers." })),
+      message: Type.Optional(Type.String({ description: "Optional follow-up message to send after restart (requires taskId)" })),
+      mode: Type.Optional(MessageModeSchema),
+      type: Type.Optional(MessageTypeSchema),
+      correlationId: Type.Optional(Type.String({ description: "Optional typed-message correlation id" })),
+      payload: Type.Optional(Type.Any({ description: "Optional typed-message payload" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      return executeMultitask(ctx, "multitask_resume", async (client) => {
+        const result = await client.resume(params);
+        return textResult(formatCommandResult(result, `Resume requested for ${params.runId}.`), result);
+      });
+    },
+  });
+
+  pi.registerTool({
     name: "multitask_status",
-    label: "Multitask Status",
-    description: "Show Pi Multitask runs/tasks.",
+    label: "Porchestrator Status",
+    description: "Show Porchestrator runs/tasks.",
     promptSnippet: "Show multitask run and worker status",
     parameters: Type.Object({ runId: Type.Optional(Type.String({ description: "Run id. Omit to list runs." })) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -699,7 +860,7 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_diff",
-    label: "Multitask Diff",
+    label: "Porchestrator Diff",
     description: "Show changed files and diff summary for a task or integration worktree.",
     promptSnippet: "Show multitask task or integration diff",
     parameters: Type.Object({
@@ -717,7 +878,7 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_review",
-    label: "Multitask Review",
+    label: "Porchestrator Review",
     description: "Run review for one task or all reviewable multitask tasks.",
     promptSnippet: "Review multitask worker output",
     parameters: Type.Object({
@@ -734,7 +895,7 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_merge",
-    label: "Multitask Merge",
+    label: "Porchestrator Merge",
     description: "Merge selected ready multitask tasks into the integration worktree.",
     promptSnippet: "Merge multitask worker results into integration",
     promptGuidelines: ["Use multitask_merge only after review and user approval."],
@@ -752,21 +913,25 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_apply",
-    label: "Multitask Apply",
+    label: "Porchestrator Apply",
     description: "Apply/merge the integration branch back to the foreground checkout.",
     promptSnippet: "Apply multitask integration results to the current checkout",
     promptGuidelines: ["Use multitask_apply only after explicit user approval."],
     parameters: Type.Object({
       runId: Type.String({ description: "Run id" }),
       requireClean: Type.Optional(Type.Boolean({ description: "Require a clean foreground checkout before applying. Default: true" })),
+      approved: Type.Optional(Type.Boolean({ description: "Set true only after explicit user approval to apply this run." })),
+      confirm: Type.Optional(Type.String({ description: "Non-interactive confirmation token: apply <runId>" })),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
+      const applyParams = { ...params };
       if (ctx.hasUI) {
         const ok = await ctx.ui.confirm("Apply multitask integration?", `Apply run ${params.runId} to the current checkout?`);
         if (!ok) return textResult(`Cancelled apply for ${params.runId}.`, { cancelled: true });
+        applyParams.approved = true;
       }
       return executeMultitask(ctx, "multitask_apply", async (client) => {
-        const result = await client.apply(params);
+        const result = await client.apply(applyParams);
         return textResult(formatCommandResult(result, "Apply complete."), result);
       });
     },
@@ -774,7 +939,7 @@ export default function piOrchestratorExtension(pi) {
 
   pi.registerTool({
     name: "multitask_cancel",
-    label: "Multitask Cancel",
+    label: "Porchestrator Cancel",
     description: "Cancel a multitask worker or whole run.",
     promptSnippet: "Cancel multitask worker sessions or runs",
     parameters: Type.Object({
@@ -790,7 +955,7 @@ export default function piOrchestratorExtension(pi) {
   });
 
   pi.registerCommand("multitask", {
-    description: "Ask the agent to use Pi Multitask mode for a request.",
+    description: "Ask the agent to use Porchestrator mode for a request.",
     handler: async (args) => {
       pi.sendUserMessage(multitaskRequestText(args));
     },
@@ -804,10 +969,15 @@ export default function piOrchestratorExtension(pi) {
   });
 
   pi.registerCommand("mt-panel", {
-    description: "Open the Pi Multitask task panel.",
+    description: "Open the Porchestrator task panel.",
     handler: async (_args, ctx) => {
       await openMultitaskPanel(ctx);
     },
+  });
+
+  pi.registerCommand("mt-dashboard", {
+    description: "Open the local Porchestrator web dashboard. Usage: /mt-dashboard [run-id|status|stop] [--open]",
+    handler: handleMultitaskDashboardCommand,
   });
 
   pi.registerCommand("mt-status", {
@@ -826,10 +996,12 @@ export default function piOrchestratorExtension(pi) {
     handler: async (args, ctx) => {
       const [runId, taskId, rest] = splitCommandArgs(args, 3);
       if (!runId || !taskId) return ctx.ui.notify("Usage: /mt-send <run-id> <task-id> [message]", "warning");
-      const message = rest || (ctx.hasUI ? await ctx.ui.input(`Message for ${runId}/${taskId}`) : undefined);
+      const restartIfNeeded = /(^|\s)--restart(\s|$)/.test(rest || "");
+      const cleanedRest = restartIfNeeded ? String(rest || "").replace(/(^|\s)--restart(\s|$)/, " ").trim() : rest;
+      const message = cleanedRest || (ctx.hasUI ? await ctx.ui.input(`Message for ${runId}/${taskId}`) : undefined);
       if (!message) return ctx.ui.notify("No message provided.", "warning");
       await notifyMultitaskCommand(ctx, "multitask_message", async (client) => {
-        const result = await client.message({ runId, taskId, message });
+        const result = await client.message({ runId, taskId, message, restartIfNeeded });
         return textResult(`Sent ${result.command} to ${runId}/${taskId}.`, result);
       });
     },
@@ -882,7 +1054,7 @@ export default function piOrchestratorExtension(pi) {
         if (!ok) return;
       }
       await notifyMultitaskCommand(ctx, "multitask_apply", async (client) => {
-        const result = await client.apply({ runId });
+        const result = await client.apply({ runId, approved: true });
         return textResult(formatCommandResult(result, "Apply complete."), result);
       });
     },
@@ -919,8 +1091,73 @@ export default function piOrchestratorExtension(pi) {
     },
   });
 
+  pi.registerCommand("mt-resume", {
+    description: "Resume/restart detached multitask workers. Usage: /mt-resume <run-id> [task-id] [message]",
+    handler: async (args, ctx) => {
+      const [runId, taskId, rest] = splitCommandArgs(args, 3);
+      if (!runId) return ctx.ui.notify("Usage: /mt-resume <run-id> [task-id] [message]", "warning");
+      await notifyMultitaskCommand(ctx, "multitask_resume", async (client) => {
+        const result = await client.resume({ runId, taskId, message: rest || undefined });
+        return textResult(formatCommandResult(result, "Resume complete."), result);
+      });
+    },
+  });
+
+  pi.registerCommand("mt-agents", {
+    description: "List available Porchestrator agents and trust provenance. Usage: /mt-agents",
+    handler: async (_args, ctx) => {
+      await notifyMultitaskCommand(ctx, "multitask_agents", async (client) => {
+        const result = await client.agents({ includeProject: true });
+        return textResult(result.summary || "No multitask agents found.", result);
+      });
+    },
+  });
+
+  pi.registerCommand("mt-doctor", {
+    description: "Diagnose Porchestrator runtime state. Usage: /mt-doctor [run-id]",
+    handler: async (args, ctx) => {
+      const runId = args?.trim() || undefined;
+      await notifyMultitaskCommand(ctx, "multitask_doctor", async (client) => {
+        const result = await client.doctor({ runId });
+        return textResult(result.formatted || result.summary || "Doctor complete.", result);
+      });
+    },
+  });
+
+  pi.registerCommand("mt-export", {
+    description: "Export a multitask run bundle. Usage: /mt-export <run-id> [output-path]",
+    handler: async (args, ctx) => {
+      const [runId, outputPath] = splitCommandArgs(args, 2);
+      if (!runId) return ctx.ui.notify("Usage: /mt-export <run-id> [output-path]", "warning");
+      await notifyMultitaskCommand(ctx, "multitask_export", async (client) => {
+        const result = await client.export({ runId, outputPath });
+        return textResult(result.formatted || result.summary || "Export complete.", result);
+      });
+    },
+  });
+
+  pi.registerCommand("mt-prune", {
+    description: "Preview or prune old Porchestrator runs. Usage: /mt-prune [run-id] [--all] [--state] [--worktrees] [--delete] [--force]",
+    handler: async (args, ctx) => {
+      const parts = parseTaskIds(args);
+      const runId = parts.find((part) => !part.startsWith("--"));
+      const dryRun = !parts.includes("--delete");
+      const removeState = parts.includes("--state") || parts.includes("--all");
+      const removeWorktrees = parts.includes("--worktrees") || parts.includes("--all") || !removeState;
+      const force = parts.includes("--force");
+      let confirm;
+      if (!dryRun && ctx.hasUI && !force) {
+        confirm = await ctx.ui.input("Type the exact confirmation phrase shown in the dry-run output, or leave blank to preview only.");
+      }
+      await notifyMultitaskCommand(ctx, "multitask_prune", async (client) => {
+        const result = await client.prune({ runId, removeState, removeWorktrees, dryRun, force, confirm });
+        return textResult(result.formatted || result.summary || "Prune complete.", result);
+      });
+    },
+  });
+
   pi.registerCommand("mt-config", {
-    description: "Create, show, validate, or edit named script config used by Pi Multitask. Usage: /mt-config [show|validate|init|add-script|set-defaults]",
+    description: "Create, show, validate, or edit named script config used by Porchestrator. Usage: /mt-config [show|validate|init|add-script|set-defaults]",
     handler: handleMultitaskConfigCommand,
   });
 };

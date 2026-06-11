@@ -7,7 +7,9 @@
     "test": "node --test pi-orchestrator/test/*.test.js",
     "test:orchestrator-smoke": "node --test pi-orchestrator/test/orchestrator-smoke.test.js",
     "test:multitask-no-credit": "node --test pi-orchestrator/test/multitask-no-credit.test.js",
-    "test:multitask-real": "PI_MULTITASK_REAL_E2E=1 node --test pi-orchestrator/test/orchestrator-real.test.js"
+    "test:multitask-real": "node --test pi-orchestrator/test/orchestrator-real.test.js",
+    "pack:orchestrator-dry-run": "npm --prefix pi-orchestrator run pack:dry-run",
+    "release:orchestrator-check": "npm run test:multitask-no-credit && npm run test:orchestrator-smoke && npm run pack:orchestrator-dry-run"
   },
   "pi": {
     "extensions": [

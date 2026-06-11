@@ -175,7 +175,7 @@ function formatSingleDiffSummary(diff, options = {}) {
   const repoRoot = options.repoRoot || diff.repoRoot;
   const relWorktree = diff.worktree && repoRoot ? relPath(repoRoot, diff.worktree) : diff.worktree;
   const lines = [
-    `# Multitask Diff: ${diff.runId}/${diff.targetId}`,
+    `# Porchestrator Diff: ${diff.runId}/${diff.targetId}`,
     "",
     `Target: ${diff.targetType}`,
     `Base: ${diff.baseRef}`,
@@ -195,7 +195,7 @@ function formatSingleDiffSummary(diff, options = {}) {
 }
 
 function formatRunDiffSummary(runDiff, options = {}) {
-  const lines = [`# Multitask Diff: ${runDiff.runId}`, ""];
+  const lines = [`# Porchestrator Diff: ${runDiff.runId}`, ""];
   if (!runDiff.targets.length) lines.push("No targets found.");
   for (const target of runDiff.targets) {
     lines.push(`- ${target.targetId} (${target.targetType}): ${target.changedFiles.length} changed file(s)${target.branchExists === false ? " · branch missing" : ""}${target.worktreeExists === false ? " · worktree missing" : ""}`);

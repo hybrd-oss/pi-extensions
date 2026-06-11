@@ -1,15 +1,44 @@
 {
   "name": "@mbattagl/pi-orchestrator",
   "version": "0.1.0",
-  "description": "Orchestrator extension for pi: dispatch worker agents in git worktrees and integrate their results",
-  "keywords": ["pi-package", "pi", "orchestrator", "subagent", "worktree"],
+  "description": "Pi Multitask: git-native local Pi workers in isolated worktrees with deterministic review and explicit apply",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "multitask",
+    "orchestrator",
+    "subagent",
+    "worktree",
+    "git",
+    "review"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hybrd-oss/pi-extensions"
+    "url": "https://github.com/hybrd-oss/pi-extensions",
+    "directory": "pi-orchestrator"
   },
+  "homepage": "https://github.com/hybrd-oss/pi-extensions/tree/main/pi-orchestrator#readme",
+  "bugs": {
+    "url": "https://github.com/hybrd-oss/pi-extensions/issues"
+  },
+  "files": [
+    "README.md",
+    "dashboard",
+    "extensions",
+    "src",
+    "prompts",
+    "agents",
+    "docs",
+    "assets/pi-multitask-gallery.png"
+  ],
   "scripts": {
-    "test:no-credit": "node --test test/multitask-no-credit.test.js"
+    "test:no-credit": "node --test test/multitask-no-credit.test.js",
+    "test:smoke": "node --test test/orchestrator-smoke.test.js",
+    "test:real": "node --test test/orchestrator-real.test.js",
+    "pack:dry-run": "npm pack --dry-run",
+    "release:check": "npm run test:no-credit && npm run test:smoke && npm run pack:dry-run"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
@@ -17,6 +46,7 @@
   },
   "pi": {
     "extensions": ["./extensions"],
-    "prompts": ["./prompts"]
+    "prompts": ["./prompts"],
+    "image": "https://raw.githubusercontent.com/hybrd-oss/pi-extensions/main/pi-orchestrator/assets/pi-multitask-gallery.png"
   }
 }

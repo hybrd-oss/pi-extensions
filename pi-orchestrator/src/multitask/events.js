@@ -8,7 +8,7 @@ const {
 } = require("./manifest.js");
 
 function createEvent(type, data = {}, context = {}) {
-  if (!type || typeof type !== "string") throw new Error("Multitask event type is required.");
+  if (!type || typeof type !== "string") throw new Error("Porchestrator event type is required.");
   return {
     time: new Date().toISOString(),
     type,

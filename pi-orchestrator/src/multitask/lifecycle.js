@@ -83,8 +83,8 @@ async function getDaemonStatus(repoRoot, options = {}) {
 }
 
 function formatDaemonStatus(status) {
-  if (!status) return "Multitask daemon: unknown";
-  const bits = [`Multitask daemon: ${status.status || "unknown"}`];
+  if (!status) return "Porchestrator daemon: unknown";
+  const bits = [`Porchestrator daemon: ${status.status || "unknown"}`];
   if (status.pid) bits.push(`pid ${status.pid}${status.pidAlive ? " alive" : " stale"}`);
   else if (status.pidPathExists) bits.push("pid invalid");
   if (status.socketPath) bits.push(`socket ${status.socketReachable ? "reachable" : status.socketExists ? "stale" : "missing"}`);

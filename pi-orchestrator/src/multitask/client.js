@@ -50,7 +50,7 @@ class MultitaskClient {
         if (message.id !== request.id) return;
         if (message.ok) finish(resolve, message.result);
         else {
-          const error = new Error(message.error?.message || "Multitask daemon request failed.");
+          const error = new Error(message.error?.message || "Porchestrator daemon request failed.");
           error.remote = message.error;
           finish(reject, error);
         }
@@ -71,7 +71,7 @@ class MultitaskClient {
             const status = this.repoRoot ? await getDaemonStatus(this.repoRoot, { socketPath }) : undefined;
             if (status) await cleanupStaleDaemonFiles(this.repoRoot, { status }).catch(() => {});
             error.message = [
-              `Multitask daemon is not reachable at ${socketPath}. Start the daemon before using the client.`,
+              `Porchestrator daemon is not reachable at ${socketPath}. Start the daemon before using the client.`,
               status ? formatDaemonStatus(status) : undefined,
             ].filter(Boolean).join("\n");
           }
@@ -81,7 +81,7 @@ class MultitaskClient {
         });
       });
       socket.on("close", () => {
-        if (!settled) finish(reject, new Error(`Multitask daemon closed the connection before responding to ${method}.`));
+        if (!settled) finish(reject, new Error(`Porchestrator daemon closed the connection before responding to ${method}.`));
       });
 
       if (timeoutMs > 0) {
@@ -138,6 +138,26 @@ class MultitaskClient {
 
   cleanup(params) {
     return this.request(METHODS.CLEANUP, params);
+  }
+
+  resume(params) {
+    return this.request(METHODS.RESUME, params);
+  }
+
+  agents(params = {}) {
+    return this.request(METHODS.AGENTS, params);
+  }
+
+  doctor(params = {}) {
+    return this.request(METHODS.DOCTOR, params);
+  }
+
+  export(params) {
+    return this.request(METHODS.EXPORT, params);
+  }
+
+  prune(params = {}) {
+    return this.request(METHODS.PRUNE, params);
   }
 
   shutdown(params = {}) {

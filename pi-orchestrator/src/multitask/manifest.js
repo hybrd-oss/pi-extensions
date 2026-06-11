@@ -1,40 +1,34 @@
 const { loadConfig, resolvePhaseScripts, scriptIds } = require("../config.js");
 const { getRefCommit, getRepoInfo } = require("../git.js");
 const { createRunId, ensureDir, fsp, path, pathExists, resolveMaybeRelative, slugify } = require("../utils.js");
+const { RUN_STATUSES, TASK_STATUSES } = require("./contracts.js");
+const { workflowManifestPatch } = require("./workflow.js");
 
 const MULTITASK_SCHEMA_VERSION = 1;
 
-const TASK_STATES = Object.freeze([
-  "planned",
-  "queued",
-  "creating_worktree",
-  "setup",
-  "running",
-  "idle",
-  "needs_attention",
-  "validating",
-  "validation_failed",
-  "ready_for_review",
-  "reviewing",
-  "needs_changes",
-  "ready_to_merge",
-  "merged",
-  "failed",
-  "cancelled",
-]);
+const TASK_STATES = TASK_STATUSES;
+const RUN_STATES = RUN_STATUSES;
+const atomicWriteQueues = new Map();
 
-const RUN_STATES = Object.freeze([
-  "planned",
-  "starting",
-  "running",
-  "idle",
-  "needs_attention",
-  "ready_for_review",
-  "merging",
-  "merged",
-  "failed",
-  "cancelled",
-]);
+async function writeTextFileAtomic(file, content) {
+  await ensureDir(path.dirname(file));
+  const previous = atomicWriteQueues.get(file) || Promise.resolve();
+  let next;
+  next = previous.catch(() => {}).then(async () => {
+    const temp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+    try {
+      await fsp.writeFile(temp, content, "utf8");
+      await fsp.rename(temp, file);
+    } catch (error) {
+      await fsp.rm(temp, { force: true }).catch(() => {});
+      throw error;
+    }
+  }).finally(() => {
+    if (atomicWriteQueues.get(file) === next) atomicWriteQueues.delete(file);
+  });
+  atomicWriteQueues.set(file, next);
+  return next;
+}
 
 function multitaskRoot(repoRoot) {
   return path.join(repoRoot, ".pi", "multitask");
@@ -115,6 +109,7 @@ function defaultWorktreeRoot(repoRoot) {
 function resolveWorktreeRoot(repoRoot, config, input = {}) {
   const configured =
     input.worktreeRoot ||
+    config?.worktrees?.root ||
     config?.raw?.multitask?.worktrees?.root ||
     config?.raw?.multitask?.worktreeRoot ||
     config?.raw?.multitaskWorktreeRoot;
@@ -235,6 +230,16 @@ async function buildManifest(input, options = {}) {
   const taskScripts = new Map(tasks.map((task) => [task.id, resolveTaskScripts(config, task)]));
   const integrationScripts = resolveIntegrationScripts(config, input.integration || {});
   const context = { repoRoot: repo.root, runId, worktreeRoot, now, taskScripts };
+  const workflowPatch = workflowManifestPatch(input, tasks);
+  const taskRecords = tasks.map((task) => createTaskRecord(task, context));
+  if (workflowPatch.dependencies) {
+    for (const task of taskRecords) {
+      const prerequisites = workflowPatch.dependencies
+        .filter((edge) => edge.after === task.id)
+        .map((edge) => edge.before);
+      if (prerequisites.length > 0) task.dependencies = [...new Set(prerequisites)];
+    }
+  }
 
   return {
     schemaVersion: MULTITASK_SCHEMA_VERSION,
@@ -253,7 +258,8 @@ async function buildManifest(input, options = {}) {
     stateDir: runDir(repo.root, runId),
     worktreeRoot,
     maxConcurrency: coerceMaxConcurrency(input.maxConcurrency, config.workers.maxConcurrency || 4),
-    tasks: tasks.map((task) => createTaskRecord(task, context)),
+    tasks: taskRecords,
+    ...workflowPatch,
     integration: {
       id: "integration",
       status: "planned",
@@ -275,7 +281,7 @@ async function saveManifest(repoRoot, manifest) {
   const runPath = runDir(repoRoot, manifest.runId);
   await ensureDir(runPath);
   manifest.updatedAt = new Date().toISOString();
-  await fsp.writeFile(manifestPath(repoRoot, manifest.runId), JSON.stringify(manifest, null, 2) + "\n", "utf8");
+  await writeTextFileAtomic(manifestPath(repoRoot, manifest.runId), JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
 
@@ -285,10 +291,51 @@ async function loadManifest(repoRoot, runId) {
   return JSON.parse(await fsp.readFile(file, "utf8"));
 }
 
+async function resolveRunId(repoRoot, runRef) {
+  const requested = String(runRef || "").trim();
+  if (!requested) throw new Error("runId is required.");
+
+  const normalized = slugify(requested, "run");
+  const directCandidates = [...new Set([requested, normalized].filter(Boolean))];
+  for (const candidate of directCandidates) {
+    if (await pathExists(manifestPath(repoRoot, candidate))) return candidate;
+  }
+
+  const runs = await listRuns(repoRoot);
+  const matches = [];
+  const addMatch = (manifest) => {
+    if (manifest && !matches.some((match) => match.runId === manifest.runId)) matches.push(manifest);
+  };
+  for (const manifest of runs) {
+    const runName = String(manifest.runName || "");
+    const normalizedName = runName ? slugify(runName, "run") : "";
+    if (manifest.runId === requested || manifest.runId === normalized) addMatch(manifest);
+    else if (runName === requested || normalizedName === normalized) addMatch(manifest);
+    else if (String(manifest.runId || "").startsWith(requested) || String(manifest.runId || "").startsWith(normalized)) addMatch(manifest);
+  }
+
+  if (matches.length === 1) return matches[0].runId;
+  if (matches.length > 1) {
+    throw new Error(
+      `Run reference ${requested} is ambiguous. Matching runs: ${matches.map((run) => `${run.runId}${run.runName ? ` (${run.runName})` : ""}`).join(", ")}. Use the full run id.`,
+    );
+  }
+
+  const available = runs.slice(0, 8).map((run) => `${run.runId}${run.runName ? ` (${run.runName})` : ""}`).join(", ");
+  throw new Error(
+    `No Porchestrator manifest found for run ${requested}. ${available ? `Available runs: ${available}.` : "No Porchestrator runs were found."}`,
+  );
+}
+
+async function loadManifestByRef(repoRoot, runRef) {
+  const runId = await resolveRunId(repoRoot, runRef);
+  return loadManifest(repoRoot, runId);
+}
+
 async function saveTaskState(repoRoot, runId, task) {
   await ensureDir(taskDir(repoRoot, runId, task.id));
   task.updatedAt = new Date().toISOString();
-  await fsp.writeFile(taskStatePath(repoRoot, runId, task.id), JSON.stringify(task, null, 2) + "\n", "utf8");
+  await writeTextFileAtomic(taskStatePath(repoRoot, runId, task.id), JSON.stringify(task, null, 2) + "\n");
   return task;
 }
 
@@ -322,7 +369,7 @@ async function createRunState(input, options = {}) {
   const planMarkdown = input.planMarkdown !== undefined
     ? input.planMarkdown
     : [
-      "# Multitask Run",
+      "# Porchestrator Run",
       "",
       `Run: ${manifest.runId}`,
       `Base ref: ${manifest.baseRef} @ ${manifest.baseCommit}`,
@@ -388,12 +435,14 @@ module.exports = {
   branchFor,
   buildManifest,
   createRunState,
+  createTaskRecord,
   daemonPidPath,
   daemonSocketPath,
   defaultWorktreeRoot,
   initializeRunState,
   listRuns,
   loadManifest,
+  loadManifestByRef,
   loadTaskState,
   manifestPath,
   multitaskConfigPath,
@@ -401,6 +450,7 @@ module.exports = {
   normalizeTaskInputs,
   planPath,
   resolveIntegrationScripts,
+  resolveRunId,
   resolveTaskScripts,
   resolveWorktreeRoot,
   runDir,
@@ -423,4 +473,5 @@ module.exports = {
   updateTask,
   worktreePathFor,
   writePlan,
+  writeTextFileAtomic,
 };
