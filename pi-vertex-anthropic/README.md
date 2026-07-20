@@ -124,6 +124,91 @@ gcloud ai model-garden models list --project <your-project> | grep -i claude
 
 ---
 
+---
+
+## Using Vertex with other coding agents (Claude Code, Conductor)
+
+**This extension is for [pi](https://github.com/earendil-works/pi-coding-agent).** Claude Code and
+Conductor are separate tools with their **own native Vertex support** — they don't use this
+extension. But the GCP-side prerequisites above are identical: do **steps 1–5** first
+(gcloud login, ADC + quota project, enable the API, and accept the Model Garden EULA for each
+model), then configure the tool.
+
+### Claude Code
+
+Docs: <https://code.claude.com/docs/en/google-vertex-ai>
+
+**Easiest:** run `claude`, then `/login` → **3rd-party platform** → **Google Vertex AI**, and follow
+the wizard (rerun anytime with `/setup-vertex`). It detects your project/region, verifies which
+models you can invoke, and writes everything to `~/.claude/settings.json`.
+
+**Manual (env vars):**
+
+```bash
+export CLAUDE_CODE_USE_VERTEX=1
+export CLOUD_ML_REGION=global
+export ANTHROPIC_VERTEX_PROJECT_ID=<your-project>
+
+# Pin models to what you enabled in Model Garden (use @default or @YYYYMMDD suffixes):
+export ANTHROPIC_DEFAULT_SONNET_MODEL='claude-sonnet-5'
+export ANTHROPIC_DEFAULT_HAIKU_MODEL='claude-haiku-4-5@20251001'
+
+# When a model isn't served on the global endpoint, override its region:
+export VERTEX_REGION_CLAUDE_HAIKU_4_5=us-east5
+```
+
+Auto-refresh expired credentials via `~/.claude/settings.json`:
+
+```json
+{
+  "gcpAuthRefresh": "gcloud auth application-default login",
+  "env": {
+    "CLAUDE_CODE_USE_VERTEX": "1",
+    "CLOUD_ML_REGION": "global",
+    "ANTHROPIC_VERTEX_PROJECT_ID": "<your-project>"
+  }
+}
+```
+
+Verify with `/status` — the *API provider* line should read **Google Vertex AI**.
+
+### Conductor
+
+Docs: <https://www.conductor.build/docs/reference/settings/reference>
+
+Conductor drives Claude Code under the hood, so the Claude Code env vars apply. In
+`~/.conductor/settings.toml` (user) or `<repo>/.conductor/settings.toml` (repo):
+
+```toml
+claude_provider   = "Vertex"
+vertex_project_id = "<your-project>"
+
+[environment_variables]
+CLOUD_ML_REGION = "global"
+# Per-model region override when a model isn't on the global endpoint:
+# VERTEX_REGION_CLAUDE_HAIKU_4_5 = "us-east5"
+```
+
+### Prompt for your coding agent
+
+Don't want to read the docs? Paste this into Claude Code / Conductor / your agent of choice and
+let it drive the setup (replace the two placeholders):
+
+> I want to run Claude models through Google Cloud Vertex AI in **<TOOL>** so usage bills to my GCP
+> project instead of an Anthropic API key. My GCP project is **<PROJECT_ID>**. Read this tool's
+> official Vertex AI docs first, then walk me through and run the setup: (1) `gcloud auth login`
+> and Application Default Credentials (`gcloud auth application-default login` +
+> `set-quota-project`); (2) enabling the Vertex AI API (`aiplatform.googleapis.com`); (3) which
+> Claude models I must enable in Vertex AI Model Garden by accepting Anthropic's EULA in the
+> console, and how to verify them (`gcloud ai model-garden models list | grep -i claude`); (4) the
+> exact env vars / settings this tool needs (provider, project ID, region, and model pins). Note:
+> Vertex model IDs require a version suffix (`@default` for latest, or `@YYYYMMDD`), and some
+> models are only served in specific regions such as `us-east5`, not `global` — a wrong ID or
+> region returns a 404 "model not found or your project does not have access." Finish by sending
+> a test message to confirm it works.
+
+---
+
 ## How it works
 
 - Model metadata (cost, context window, thinking config) is read live from pi-ai's own Anthropic
