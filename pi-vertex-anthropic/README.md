@@ -1,4 +1,4 @@
-# @mbattagl/pi-vertex-anthropic
+# pi-vertex-anthropic
 
 Run **Anthropic Claude models on Google Cloud Vertex AI** inside [pi](https://github.com/earendil-works/pi-coding-agent) — so your Claude usage bills against your **GCP project / credits** instead of an Anthropic API key.
 
