@@ -7,14 +7,18 @@ Claude on Google Cloud Vertex AI for [pi](https://github.com/earendil-works/pi-c
 1. Authenticate ADC once in your shell:
    ```bash
    gcloud auth application-default login
-   gcloud auth application-default set-quota-project <your-project>   # optional but recommended
+   gcloud auth application-default set-quota-project <your-project>
    ```
    (Or set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`, or run on GCE/GKE.)
 
-2. The extension is wired into this package's config. Select a model:
+2. **Enable each Claude model in Vertex AI Model Garden** (accept Anthropic's EULA) for your
+   project — otherwise requests 404 with "your project does not have access to it." Model IDs use
+   a version suffix (`@default` for latest, or `@YYYYMMDD` to pin).
+
+3. The extension is wired into this package's config. Select a model:
    ```bash
    pi --list-models | grep vertex-anthropic
-   pi -m vertex-anthropic/claude-opus-4-8
+   pi --model "vertex-anthropic/claude-sonnet-5@default"
    ```
 
 There is **no `/login` flow** — auth is ambient via ADC.

@@ -147,11 +147,14 @@ function streamSimple(model: Model<Api>, context: Context, options?: SimpleStrea
 // differs (Vertex uses `@YYYYMMDD` version suffixes vs the API's `-YYYYMMDD`).
 // =============================================================================
 
+// Vertex requires a version suffix on the model id (`@default` for the latest,
+// or `@YYYYMMDD` for a pinned version). Each model must also be enabled in the
+// project's Model Garden (accept Anthropic's EULA) or requests 404.
 const VERTEX_MODEL_IDS: { vertexId: string; baseId: string }[] = [
-	{ vertexId: "claude-opus-4-7", baseId: "claude-opus-4-7" },
-	{ vertexId: "claude-opus-4-8", baseId: "claude-opus-4-8" },
-	{ vertexId: "claude-sonnet-4-6", baseId: "claude-sonnet-4-6" },
-	{ vertexId: "claude-fable-5", baseId: "claude-fable-5" },
+	{ vertexId: "claude-sonnet-5@default", baseId: "claude-sonnet-5" },
+	{ vertexId: "claude-opus-4-8@default", baseId: "claude-opus-4-8" },
+	{ vertexId: "claude-sonnet-4-6@default", baseId: "claude-sonnet-4-6" },
+	{ vertexId: "claude-fable-5@default", baseId: "claude-fable-5" },
 	{ vertexId: "claude-haiku-4-5@20251001", baseId: "claude-haiku-4-5-20251001" },
 ];
 

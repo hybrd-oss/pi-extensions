@@ -15,10 +15,10 @@ const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const ext = join(pkgDir, "extensions", "vertex-anthropic.ts");
 
 const EXPECTED = [
-	"claude-opus-4-7",
-	"claude-opus-4-8",
-	"claude-sonnet-4-6",
-	"claude-fable-5",
+	"claude-sonnet-5@default",
+	"claude-opus-4-8@default",
+	"claude-sonnet-4-6@default",
+	"claude-fable-5@default",
 	"claude-haiku-4-5@20251001",
 ];
 
