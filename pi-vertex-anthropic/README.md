@@ -1,6 +1,8 @@
-# @mbattagl/pi-vertex-anthropic
+# pi-vertex-anthropic
 
-Run **Anthropic Claude models on Google Cloud Vertex AI** inside [pi](https://github.com/earendil-works/pi-coding-agent) — so your Claude usage bills against your **GCP project / credits** instead of an Anthropic API key.
+## WARNING: GCP Credits do not cover anthropic models. Don't find this out the hard way. You probably don't need this extension.
+
+Run **Anthropic Claude models on Google Cloud Vertex AI** inside [pi](https://github.com/earendil-works/pi-coding-agent) — so your Claude usage bills against your **GCP project** instead of an Anthropic API key.
 
 - No Anthropic API key.
 - No pi `/login` flow — authentication is ambient via Google **Application Default Credentials (ADC)**.
