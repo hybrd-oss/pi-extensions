@@ -6,99 +6,15 @@
  * to block, allow once, or permanently allowlist the rule.
  *
  * Requires `dcg` to be installed: https://github.com/Dicklesworthstone/destructive_command_guard
+ *
+ * The actual `dcg` protocol (spawning it, parsing its JSON) lives in `./lib/dcg-protocol.mjs`,
+ * which has zero pi-specific imports and is unit-tested directly (see `test/`). This file is
+ * only the pi hook wiring on top of that.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
-
-interface DcgResult {
-  decision: "allow" | "deny";
-  reason?: string;
-  allowOnceCode?: string;
-  ruleId?: string;
-}
-
-function spawnWithStdin(
-  cmd: string,
-  args: string[],
-  input: string,
-  timeout: number,
-): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let killed = false;
-
-    const timer = setTimeout(() => {
-      killed = true;
-      proc.kill("SIGTERM");
-    }, timeout);
-
-    proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-
-    proc.on("error", (err: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (killed) {
-        reject(Object.assign(new Error("Process timed out"), { code: "ETIMEDOUT" }));
-      } else {
-        resolve({ stdout, stderr, exitCode: code });
-      }
-    });
-
-    proc.stdin.write(input);
-    proc.stdin.end();
-  });
-}
-
-async function runDcg(command: string): Promise<DcgResult> {
-  const input = JSON.stringify({
-    tool_name: "Bash",
-    tool_input: { command },
-  });
-
-  try {
-    const { stdout, stderr } = await spawnWithStdin("dcg", [], input, 10_000);
-
-    // Safe commands produce no output
-    const trimmed = stdout.trim();
-    if (!trimmed) return { decision: "allow" };
-
-    // Parse JSON from stdout
-    const jsonMatch = trimmed.match(/\{[^{}]*"hookSpecificOutput"[^}]*\{[^}]*\}[^}]*\}/);
-    if (!jsonMatch) return { decision: "allow" };
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    const hook = parsed?.hookSpecificOutput;
-    if (!hook || hook.permissionDecision !== "deny") return { decision: "allow" };
-
-    // Extract rule ID from stderr (rich output has "Rule: <id>")
-    const ruleMatch = stderr.match(/Rule:\s+(\S+)/);
-
-    return {
-      decision: "deny",
-      reason: hook.permissionDecisionReason,
-      allowOnceCode: hook.allowOnceCode,
-      ruleId: ruleMatch?.[1],
-    };
-  } catch (err: any) {
-    if (err.code === "ENOENT") {
-      throw new Error("dcg not found on PATH. Install from: https://github.com/Dicklesworthstone/destructive_command_guard");
-    }
-    // Other errors (timeout, etc.) — fail open but notify
-    return { decision: "allow" };
-  }
-}
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { dcgAllowOnce, dcgAllowlistAdd, runDcg } from "./lib/dcg-protocol.mjs";
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
@@ -107,7 +23,7 @@ export default function (pi: ExtensionAPI) {
     const command = event.input.command;
     if (!command) return undefined;
 
-    let result: DcgResult;
+    let result: Awaited<ReturnType<typeof runDcg>>;
     try {
       result = await runDcg(command);
     } catch (err: any) {
@@ -148,10 +64,7 @@ export default function (pi: ExtensionAPI) {
 
     if (choice?.startsWith("✅") && allowOnceCode) {
       try {
-        const { stdout, stderr, exitCode } = await spawnWithStdin("dcg", ["allow-once", allowOnceCode], "y\n", 5_000);
-        if (exitCode !== 0) {
-          throw new Error((stderr || stdout || `dcg allow-once exited with code ${exitCode}`).trim());
-        }
+        await dcgAllowOnce(allowOnceCode);
         ctx.ui.notify(`DCG: Allowed once (code ${allowOnceCode})`, "info");
         return undefined;
       } catch (err: any) {
@@ -162,9 +75,7 @@ export default function (pi: ExtensionAPI) {
 
     if (choice?.startsWith("📋") && ruleId) {
       try {
-        await execFileAsync("dcg", ["allowlist", "add", ruleId, "--reason", "Allowed via pi DCG extension"], {
-          timeout: 5_000,
-        });
+        await dcgAllowlistAdd(ruleId, "Allowed via pi DCG extension");
         ctx.ui.notify(`DCG: Rule ${ruleId} added to allowlist`, "info");
         return undefined;
       } catch (err: any) {

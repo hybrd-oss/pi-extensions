@@ -9,9 +9,12 @@
     "url": "https://github.com/mbattagl/pi-dcg"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": ["./extensions"]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
   }
 }
