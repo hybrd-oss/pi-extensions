@@ -1,0 +1,17 @@
+{
+  "name": "@hybrd-oss/pi-clear",
+  "version": "1.0.0",
+  "description": "/clear command for pi — alias for /new that starts a fresh session",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hybrd-oss/pi-extensions"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}

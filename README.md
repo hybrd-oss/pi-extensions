@@ -49,6 +49,14 @@ npm test
 npm run test:orchestrator-smoke
 ```
 
+### [pi-pr-footer](./pi-pr-footer)
+
+Shows the current branch's open PR URL in pi's footer status area, if one exists. Requires the [GitHub CLI](https://cli.github.com/) (`gh`), authenticated.
+
+### [pi-clear](./pi-clear)
+
+Adds a `/clear` command that starts a fresh session (alias for `/new`).
+
 ## License
 
 MIT
