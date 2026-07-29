@@ -18,7 +18,8 @@
       "pi-caveman/extensions",
       "pi-vertex-anthropic/extensions",
       "pi-pr-footer/extensions",
-      "pi-clear/extensions"
+      "pi-clear/extensions",
+      "pi-statusbar/extensions"
     ],
     "skills": ["pi-caveman/skills"],
     "prompts": ["pi-orchestrator/prompts"]
