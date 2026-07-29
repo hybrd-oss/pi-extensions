@@ -102,7 +102,13 @@ export function decideFromDcgStdout(stdout) {
     reason: hook.permissionDecisionReason,
     allowOnceCode: hook.allowOnceCode,
     ruleId: hook.ruleId,
+    output: trimmed,
   };
+}
+
+/** The block reason is Pi's tool-result context, so keep DCG's complete response intact. */
+export function formatDcgBlockReason(result) {
+  return `DCG blocked this command. Full DCG response:\n${result.output ?? result.reason ?? "Blocked"}`;
 }
 
 /** Spawn `dcg`, feed it the hook-protocol request for `command`, and decide. */

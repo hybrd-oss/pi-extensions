@@ -15,7 +15,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
-import { decideFromDcgStdout, extractBalancedJsonObject, runDcg } from "../extensions/lib/dcg-protocol.mjs";
+import { decideFromDcgStdout, extractBalancedJsonObject, formatDcgBlockReason, runDcg } from "../extensions/lib/dcg-protocol.mjs";
 
 // Real `dcg` stdout for `git push --force` — two levels of nesting (hookSpecificOutput ->
 // remediation), which is exactly the shape the old single-level regex mismatched.
@@ -32,6 +32,11 @@ test("decideFromDcgStdout denies on nested `remediation` output (the actual regr
   assert.equal(result.ruleId, "core.git:push-force-long");
   assert.equal(result.allowOnceCode, "944596");
   assert.match(result.reason, /Force push/);
+  assert.equal(result.output, DENY_WITH_NESTED_REMEDIATION.trim());
+  assert.equal(
+    formatDcgBlockReason(result),
+    `DCG blocked this command. Full DCG response:\n${DENY_WITH_NESTED_REMEDIATION.trim()}`,
+  );
 });
 
 test("decideFromDcgStdout still denies on flat (non-nested) output", () => {

@@ -10,13 +10,20 @@ pi install npm:@mbattagl/pi-dcg
 
 ## What it does
 
-Intercepts every `bash` tool call and pipes it through DCG. When a destructive command is detected, you get an interactive prompt with options to:
+Intercepts every `bash` tool call and pipes it through DCG. A denied command is blocked automatically by default, and Pi receives DCG's complete response as the blocked tool result so the agent can choose a safe next step.
 
-- **Block** — prevent the command from running
-- **Allow Once** — run this specific command once
-- **Allowlist Rule** — permanently allow the matched rule
+## Configuration
 
-In non-interactive mode (print/JSON), destructive commands are auto-blocked.
+The default mode is `block`: no prompt, no command execution. Set `prompt` only when you want the old interactive options (**Block**, **Allow Once**, **Allowlist Rule**):
+
+```json
+// ~/.config/pi-dcg/config.json
+{ "mode": "prompt" }
+```
+
+`PI_DCG_MODE=block|prompt` overrides the file for one Pi process. Reload Pi after changing the file.
+
+In non-interactive mode (print/JSON), destructive commands are always auto-blocked.
 
 ## Prerequisites
 
