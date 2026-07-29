@@ -58,7 +58,7 @@ func makeListener() -> Int32 {
 
 // MARK: - App
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	struct Session { var name: String; var state: String }
 
 	var sessions: [Int32: Session] = [:]  // fd -> session
@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 	func applicationDidFinishLaunching(_ notification: Notification) {
 		statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 		statusItem.menu = NSMenu()
+		statusItem.menu?.delegate = self
 		updateUI()
 		startListening()
 	}
@@ -134,6 +135,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 				NSApp.terminate(nil)
 			}
 		}
+	}
+
+	// Closing the menu acknowledges attention: you saw it.
+	func menuDidClose(_ menu: NSMenu) {
+		for fd in sessions.keys where sessions[fd]?.state == "attention" {
+			sessions[fd]?.state = "idle"
+		}
+		updateUI()
 	}
 
 	// MARK: UI

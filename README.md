@@ -57,6 +57,12 @@ Shows the current branch's open PR URL in pi's footer status area, if one exists
 
 Adds a `/clear` command that starts a fresh session (alias for `/new`).
 
+### [pi-statusbar](./pi-statusbar)
+
+macOS menu bar icon showing the status of all running pi sessions: spinning pie while a session is working, orange pie when one needs attention, dim pie when all idle. Clicking the icon lists each session and its state; closing the menu (or submitting input to a session) clears its attention state.
+
+A tiny Swift daemon (compiled automatically on first use, requires Xcode Command Line Tools) owns the icon; sessions report state over `~/.pi/statusbar.sock`. The daemon exits when the last session ends. Disable the working animation via `~/.pi/agent/statusbar.json`: `{ "animate": false }`.
+
 ## License
 
 MIT
