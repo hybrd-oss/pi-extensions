@@ -4,7 +4,8 @@
   "description": "Pi extensions by mibattaglia",
   "keywords": ["pi-package"],
   "scripts": {
-    "test": "node --test pi-orchestrator/test/*.test.js",
+    "test": "node --test pi-orchestrator/test/*.test.js pi-show-me/test/*.test.mjs",
+    "test:show-me": "npm test --prefix pi-show-me",
     "test:orchestrator-smoke": "node --test pi-orchestrator/test/orchestrator-smoke.test.js",
     "test:multitask-no-credit": "node --test pi-orchestrator/test/multitask-no-credit.test.js",
     "test:multitask-real": "PI_MULTITASK_REAL_E2E=1 node --test pi-orchestrator/test/orchestrator-real.test.js"
@@ -16,12 +17,13 @@
       "pi-ask-question/extensions",
       "pi-orchestrator/extensions",
       "pi-caveman/extensions",
+      "pi-show-me/extensions",
       "pi-vertex-anthropic/extensions",
       "pi-pr-footer/extensions",
       "pi-clear/extensions",
       "pi-statusbar/extensions"
     ],
-    "skills": ["pi-caveman/skills"],
+    "skills": ["pi-caveman/skills", "pi-show-me/skills"],
     "prompts": ["pi-orchestrator/prompts"]
   }
 }

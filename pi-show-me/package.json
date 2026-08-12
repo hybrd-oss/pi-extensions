@@ -1,0 +1,22 @@
+{
+  "name": "@mbattagl/pi-show-me",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Always-on visual explanation mode for Pi",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hybrd-oss/pi-extensions"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  }
+}

@@ -38,6 +38,10 @@ Provides an interactive `ask_question` tool for asking users multiple-choice or 
 
 Provides caveman mode (`/caveman`) plus terse commit/review/compress/help skills. When caveman mode is active, spawned `subagent` tasks inherit caveman style automatically. Cavecrew/caveman-specific agents are intentionally not shipped.
 
+### [pi-show-me](./pi-show-me)
+
+Provides an always-on visual-explanation mode with `/show-me on|off|status` and an explicit `/skill:show-me` command.
+
 ### [pi-orchestrator](./pi-orchestrator)
 
 Provides orchestrator tools and commands for splitting large specs into worker tasks, running workers in per-task git worktrees, recording manifests, verifying runs, and merging completed worker branches into an integration worktree.
