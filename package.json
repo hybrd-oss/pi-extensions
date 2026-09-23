@@ -4,7 +4,7 @@
   "description": "Pi extensions by mibattaglia",
   "keywords": ["pi-package"],
   "scripts": {
-    "test": "node --test pi-orchestrator/test/*.test.js pi-show-me/test/*.test.mjs",
+    "test": "node --test pi-orchestrator/test/*.test.js pi-show-me/test/*.test.mjs pi-cache-tax/test/*.test.mjs",
     "test:show-me": "npm test --prefix pi-show-me",
     "test:orchestrator-smoke": "node --test pi-orchestrator/test/orchestrator-smoke.test.js",
     "test:multitask-no-credit": "node --test pi-orchestrator/test/multitask-no-credit.test.js",
@@ -21,7 +21,8 @@
       "pi-vertex-anthropic/extensions",
       "pi-pr-footer/extensions",
       "pi-clear/extensions",
-      "pi-statusbar/extensions"
+      "pi-statusbar/extensions",
+      "pi-cache-tax/extensions"
     ],
     "skills": ["pi-caveman/skills", "pi-show-me/skills"],
     "prompts": ["pi-orchestrator/prompts"]

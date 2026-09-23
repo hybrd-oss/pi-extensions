@@ -67,6 +67,14 @@ macOS menu bar icon showing the status of all running pi sessions: spinning pie 
 
 A tiny Swift daemon (compiled automatically on first use, requires Xcode Command Line Tools) owns the icon; sessions report state over `~/.pi/statusbar.sock`. The daemon exits when the last session ends. Disable the working animation via `~/.pi/agent/statusbar.json`: `{ "animate": false }`.
 
+### [pi-cache-tax](./pi-cache-tax)
+
+Prompt-cache cost guard, after [cache-tax](https://github.com/karanb192/cache-tax). Applies to models that charge for cache writes: Bedrock Claude (5m TTL, or 1h with `PI_CACHE_RETENTION=long`) and Azure GPT-5.6 (30m).
+
+- **Guard:** when the cache has expired and context is ≥50k tokens, asks before sending and shows the estimated rewrite cost. Declining puts your text back in the editor.
+- **`/keepwarm [90m|2h|off]`** (default 1h): while idle, replays the last request with a one-line ping just before the TTL runs out. Stops if a ping reads nothing from the cache.
+- **Azure ≤5.5 with `PI_CACHE_RETENTION=long`:** adds `prompt_cache_retention: "24h"`, which pi's Azure provider doesn't send. Same price.
+
 ## License
 
 MIT
