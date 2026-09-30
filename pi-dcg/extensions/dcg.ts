@@ -2,8 +2,8 @@
  * Destructive Command Guard (DCG) Extension for Pi
  *
  * Intercepts bash tool calls and pipes them through DCG to detect
- * destructive commands. On block, presents the user with options
- * to block, allow once, or permanently allowlist the rule.
+ * destructive commands. Blocks denied commands by default; prompt mode can
+ * instead offer block, allow-once, and allowlist options.
  *
  * Requires `dcg` to be installed: https://github.com/Dicklesworthstone/destructive_command_guard
  *
@@ -14,9 +14,29 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { dcgAllowOnce, dcgAllowlistAdd, runDcg } from "./lib/dcg-protocol.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { dcgAllowOnce, dcgAllowlistAdd, formatDcgBlockReason, runDcg } from "./lib/dcg-protocol.mjs";
+
+type Mode = "block" | "prompt";
+
+function configuredMode(): Mode {
+  const value = process.env.PI_DCG_MODE;
+  if (value === "block" || value === "prompt") return value;
+
+  const configPath = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "pi-dcg", "config.json");
+  try {
+    const mode = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8"))?.mode : undefined;
+    if (mode === "block" || mode === "prompt") return mode;
+  } catch {
+    // Ignore a broken optional config; secure default remains block.
+  }
+  return "block";
+}
 
 export default function (pi: ExtensionAPI) {
+  const mode = configuredMode();
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return undefined;
 
@@ -35,11 +55,10 @@ export default function (pi: ExtensionAPI) {
 
     // --- Blocked by DCG ---
     const { reason, allowOnceCode, ruleId } = result;
+    const blockReason = formatDcgBlockReason(result);
 
-    // Non-interactive mode: auto-block
-    if (!ctx.hasUI) {
-      return { block: true, reason: `DCG: ${reason ?? "Blocked"}` };
-    }
+    // Default to a pre-tool-hook-style denial; prompt mode is explicit opt-in.
+    if (mode === "block" || !ctx.hasUI) return { block: true, reason: blockReason };
 
     // Build options
     const options: string[] = ["❌ Block"];
@@ -69,7 +88,7 @@ export default function (pi: ExtensionAPI) {
         return undefined;
       } catch (err: any) {
         ctx.ui.notify(`DCG: Failed to run allow-once: ${err.message}`, "error");
-        return { block: true, reason: "DCG allow-once failed" };
+        return { block: true, reason: `${blockReason}\n\nDCG allow-once failed: ${err.message}` };
       }
     }
 
@@ -80,10 +99,10 @@ export default function (pi: ExtensionAPI) {
         return undefined;
       } catch (err: any) {
         ctx.ui.notify(`DCG: Failed to add to allowlist: ${err.message}`, "error");
-        return { block: true, reason: "DCG allowlist add failed" };
+        return { block: true, reason: `${blockReason}\n\nDCG allowlist add failed: ${err.message}` };
       }
     }
 
-    return { block: true, reason: "Blocked by DCG" };
+    return { block: true, reason: blockReason };
   });
 }
